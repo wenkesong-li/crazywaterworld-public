@@ -1,6 +1,6 @@
 # 疯狂水世界 · 航行控制台
 
-![Node.js 22.12+](https://img.shields.io/badge/Node.js-22.12%2B-417E38) ![Windows](https://img.shields.io/badge/Windows-本地控制台-0078D4) [![仅供学习交流](https://img.shields.io/badge/license-Study%20Only-orange)](LICENSE)
+![Node.js 22.12+](https://img.shields.io/badge/Node.js-22.12%2B-417E38) ![Windows / macOS](https://img.shields.io/badge/Windows%20%7C%20macOS-本地控制台-0078D4) [![仅供学习交流](https://img.shields.io/badge/license-Study%20Only-orange)](LICENSE)
 
 在本机管理《疯狂水世界》账号，直连游戏 WebSocket，安排领奖、基地经营、英雄养成和舰队任务。每个账号独立保存开关、详细配置和用量记录，运行日志会说明实际完成的操作、收益及跳过原因。
 
@@ -8,7 +8,7 @@
 
 ## 快速开始
 
-需要 Windows，建议使用 Node.js 22.12 或更高版本；同时兼容 Node.js 20.19+（20.x）。请先在电脑版微信中打开一次《疯狂水世界》，供工具读取本机游戏协议包。配置表和世界地图默认从游戏 CDN 自动更新。添加抖音账号还需要登录本机的电脑版抖音。支付宝扫码首次使用时会自动下载与 Playwright 版本匹配的 Chromium（需服务器可访问下载源并预留磁盘空间）；已有浏览器可继续复用，也可通过 `CW_BROWSER_EXECUTABLE` 指定。
+支持 Windows 与 macOS（Apple Silicon 和 Intel）。建议使用 Node.js 22.12 或更高版本，同时兼容 Node.js 20.19+（20.x）；也可使用[绿色版](#常用命令)免装 Node 直接启动。请先在电脑版微信（Windows 或 mac 客户端）中打开一次《疯狂水世界》，供工具读取本机游戏协议包；mac 读取微信缓存需要为终端或绿色版授予**完全磁盘访问**权限，无法读取时可用 `CW_PROTO_BUNDLE` 指定 `_src_chunks_.wxapkg` 或解包后的 `game.js`。配置表和世界地图默认从游戏 CDN 自动更新。添加抖音账号需要电脑版抖音中的游戏资源，mac 需通过 `CW_DOUYIN_GAME_DIR` 指定资源目录。支付宝扫码首次使用时会自动下载与 Playwright 版本匹配的 Chromium（需可访问下载源并预留磁盘空间）；已有浏览器可继续复用，也可通过 `CW_BROWSER_EXECUTABLE` 指定。
 
 ```powershell
 git clone https://github.com/xutongxue233/crazywaterworld.git
@@ -107,7 +107,7 @@ npm start
 | `npm start` | 构建界面并启动控制台，默认端口 `17321` |
 | `./packaging/build-windows.ps1` | 在 Windows 本地构建绿色版 ZIP（内置 Node 运行时；GitHub Actions 手动触发同一脚本） |
 | `packaging/build-macos.sh` | 在 macOS 本地构建绿色版 ZIP（默认当前架构，可传 `arm64` 或 `x64`） |
-| `.\start-console.cmd` | 使用 Node 启动入口，端口 `17323`，输出地址与实时日志 |
+| `.\start-console.cmd` | 使用 Node 启动入口，端口 `17323`，输出地址与实时日志（Windows） |
 | `node tools/start-console.mjs` | 直接使用上述启动入口 |
 | `npm run build:ui` | 重新构建控制台页面与样式 |
 | `npm run test:offline` | 运行无需本机游戏协议包的核心回归 |

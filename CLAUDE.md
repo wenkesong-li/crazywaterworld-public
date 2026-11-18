@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-微信/抖音小游戏《疯狂水世界》的协议侧挂机工具：直连游戏 WebSocket 网关，并提供本地网页控制台。仅面向 Windows，Node.js ^20.19.0 或 >=22.12.0，ESM。文档、界面和日志均为中文。
+微信/抖音小游戏《疯狂水世界》的协议侧挂机工具：直连游戏 WebSocket 网关，并提供本地网页控制台。支持 Windows 与 macOS（Apple Silicon 和 Intel），Node.js ^20.19.0 或 >=22.12.0，ESM。文档、界面和日志均为中文。mac 从微信 Containers 缓存探测协议包（受完全磁盘访问权限限制），抖音扫码的游戏资源在 mac 需 `CW_DOUYIN_GAME_DIR` 指定；微信扫码授权服务内置 darwin 二进制。
 
 ## 常用命令
 
