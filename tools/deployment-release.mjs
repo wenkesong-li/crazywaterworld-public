@@ -18,11 +18,11 @@ if (action === 'prepare') {
   const now = new Date();
   const date = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
   atomicJson(path.resolve(destination), {
-    version: 'deploy-' + document.to.slice(0, 12), date, title: '版本更新 · ' + date, author: '李大龙',
+    version: 'deploy-' + document.to.slice(0, 12), date, title: '版本更新 · ' + date,
     items, from: document.from, commit: document.to, preparedAt: now.toISOString(),
   });
 } else if (action === 'publish') {
-  if (!/^deploy-[a-f0-9]{12}$/.test(document.version) || !/^[a-f0-9]{40}$/.test(document.commit) || !Array.isArray(document.items) || document.author !== '李大龙') throw Error('部署更新记录无效');
+  if (!/^deploy-[a-f0-9]{12}$/.test(document.version) || !/^[a-f0-9]{40}$/.test(document.commit) || !Array.isArray(document.items)) throw Error('部署更新记录无效');
   const file = path.join(path.resolve(destination), 'console-deployment-history.json');
   withFileLock(file, () => {
     const history = readJson(file, []);

@@ -39,7 +39,7 @@ async function initReleaseNotes() {
       title.textContent = release.title;
       const meta = document.createElement('p');
       meta.className = 'release-notes-meta';
-      meta.textContent = release.date + ' · ' + release.version + ' · 作者：' + release.author;
+      meta.textContent = release.date + ' · ' + release.version;
       const list = document.createElement('ul');
       for (const item of release.items) {
         const row = document.createElement('li');
