@@ -104,7 +104,14 @@ try {
   assert.ok(unavailable.reason.includes('git'));
   console.log('通过：非 git 目录提示无法在线更新');
 
-  console.log('检查更新专项 6/6 通过');
+  // 本机没有 git 程序时给出安装指引，而不是晦涩的执行错误。
+  fs.mkdirSync(path.join(plain, '.git'), { recursive: true });
+  const noGit = await createUpdateService({ root: plain, gitExecutable: 'cw-definitely-not-git' }).check();
+  assert.equal(noGit.available, false);
+  assert.ok(noGit.reason.includes('未检测到 git'));
+  console.log('通过：缺少 git 程序时提示安装 Git');
+
+  console.log('检查更新专项 7/7 通过');
 } finally {
   fs.rmSync(base, { recursive: true, force: true });
 }

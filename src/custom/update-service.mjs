@@ -4,15 +4,15 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-function runGitSync(root, args) {
-  const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true });
-  if (result.status !== 0) throw new Error('git ' + args[0] + ' 失败：' + (result.stderr || '').trim().split('\n')[0]);
+function runGitSync(root, args, gitExecutable = 'git') {
+  const result = spawnSync(gitExecutable, args, { cwd: root, encoding: 'utf8', windowsHide: true });
+  if (result.error || result.status !== 0) throw new Error('git ' + args[0] + ' 失败：' + (result.stderr || '').trim().split('\n')[0]);
   return result.stdout;
 }
 
-function runGit(root, args, { onOutput } = {}) {
+function runGit(root, args, gitExecutable = 'git', { onOutput } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn('git', args, { cwd: root, windowsHide: true });
+    const child = spawn(gitExecutable, args, { cwd: root, windowsHide: true });
     let stdout = '', stderr = '';
     child.stdout.on('data', chunk => { stdout += chunk; onOutput?.(String(chunk)); });
     child.stderr.on('data', chunk => { stderr += chunk; onOutput?.(String(chunk)); });
@@ -43,6 +43,7 @@ export function createUpdateService({
   remote = process.env.CW_UPDATE_REMOTE || 'origin',
   branch = process.env.CW_UPDATE_BRANCH || 'main',
   npmExecutable,
+  gitExecutable = 'git',
 } = {}) {
   let job = null;
 
@@ -55,18 +56,23 @@ export function createUpdateService({
     if (!fs.existsSync(root) || !fs.existsSync(path.join(root, '.git'))) {
       return { available: false, reason: '当前目录不是 git 克隆，无法在线更新。请使用 git clone 方式安装，或重新下载绿色版。' };
     }
+    // 本机没装 git 程序时（例如只拷贝了仓库目录），给出明确的安装指引而不是晦涩的执行错误。
+    const probe = spawnSync(gitExecutable, ['--version'], { encoding: 'utf8', windowsHide: true });
+    if (probe.error || probe.status !== 0) {
+      return { available: false, reason: '未检测到 git 程序，无法在线更新。请先安装 Git（https://git-scm.com/downloads）后重试，或手动下载最新版本覆盖。' };
+    }
     let current;
-    try { current = runGitSync(root, ['rev-parse', 'HEAD']).trim(); }
+    try { current = runGitSync(root, ['rev-parse', 'HEAD'], gitExecutable).trim(); }
     catch { return { available: false, reason: '无法读取本地 git 版本，请确认仓库完整。' }; }
     let remoteLine;
-    try { remoteLine = runGitSync(root, ['ls-remote', remote, 'refs/heads/' + branch]).trim(); }
+    try { remoteLine = runGitSync(root, ['ls-remote', remote, 'refs/heads/' + branch], gitExecutable).trim(); }
     catch { return { available: false, reason: '无法访问更新源（' + remote + '），请检查网络或远程配置。', current }; }
     const remoteSha = remoteLine.split(/\s+/)[0] || '';
     if (!remoteSha) return { available: false, reason: '更新源上没有 ' + branch + ' 分支。', current };
     if (remoteSha === current) return { available: true, upToDate: true, current };
     try {
-      runGitSync(root, ['fetch', '--quiet', remote, branch]);
-      const log = runGitSync(root, ['log', '--oneline', '--no-decorate', 'HEAD..FETCH_HEAD']).trim();
+      runGitSync(root, ['fetch', '--quiet', remote, branch], gitExecutable);
+      const log = runGitSync(root, ['log', '--oneline', '--no-decorate', 'HEAD..FETCH_HEAD'], gitExecutable).trim();
       const commits = log ? log.split('\n').slice(0, 100) : [];
       return { available: true, upToDate: false, current, remote: remoteSha, commits };
     } catch (error) {
@@ -80,13 +86,13 @@ export function createUpdateService({
 
   async function apply() {
     try {
-      const status = (await runGit(root, ['status', '--porcelain'])).trim();
+      const status = (await runGit(root, ['status', '--porcelain'], gitExecutable)).trim();
       if (status) throw new Error('本地代码有未提交的修改，请先还原或提交后再更新');
-      const before = (await runGit(root, ['rev-parse', 'HEAD'])).trim();
+      const before = (await runGit(root, ['rev-parse', 'HEAD'], gitExecutable)).trim();
       setStage('fetch', 5, '正在拉取远端代码…');
       // git fetch --progress 的百分比输出在 stderr，取最近一次百分比折算到 5–60%。
       let fetchPercent = 5;
-      await runGit(root, ['fetch', '--progress', remote, branch], {
+      await runGit(root, ['fetch', '--progress', remote, branch], gitExecutable, {
         onOutput: text => {
           const match = /(\d+)%/.exec(text.split(/\r|\n/).filter(Boolean).pop() ?? '');
           if (match) {
@@ -96,9 +102,9 @@ export function createUpdateService({
         },
       });
       setStage('pull', 62, '正在应用更新…');
-      await runGit(root, ['pull', '--ff-only', remote, branch]);
-      const after = (await runGit(root, ['rev-parse', 'HEAD'])).trim();
-      const changed = await runGit(root, ['diff', '--name-only', before, after]);
+      await runGit(root, ['pull', '--ff-only', remote, branch], gitExecutable);
+      const after = (await runGit(root, ['rev-parse', 'HEAD'], gitExecutable)).trim();
+      const changed = await runGit(root, ['diff', '--name-only', before, after], gitExecutable);
       const hasPackage = fs.existsSync(path.join(root, 'package.json'));
       if (hasPackage && /^package-lock\.json$/m.test(changed)) {
         setStage('deps', 65, '依赖有变化，正在安装…');
