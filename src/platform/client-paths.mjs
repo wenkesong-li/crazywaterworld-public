@@ -7,9 +7,11 @@ function directories(root) {
     return fs.readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name);
   } catch (error) {
     if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return [];
-    // macOS 隐私权限拦截读取微信容器等目录时，直接给出可操作的处理方式。
+    // macOS 隐私权限拦截读取微信容器等目录时，直接给出可执行的解决命令。
     if (error.code === 'EPERM' || error.code === 'EACCES') {
-      throw new Error(`无权读取 ${root}：macOS 请在「系统设置 → 隐私与安全性 → 完全磁盘访问权限」中为终端授权并重启终端；也可用 CW_PROTO_BUNDLE 指向 _src_chunks_.wxapkg 跳过微信缓存`, { cause: error });
+      throw new Error(`无权读取 ${root}（macOS 隐私权限）。两种解决方式：`
+        + ' 方式一·授权后自动读取：运行 open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles" 打开「完全磁盘访问权限」，把当前终端加进去，完全退出（Cmd+Q）重开终端再启动；'
+        + ' 方式二·跳过微信缓存：CW_PROTO_BUNDLE=<协议包路径>/_src_chunks_.wxapkg ./点此启动.command', { cause: error });
     }
     throw error;
   }
