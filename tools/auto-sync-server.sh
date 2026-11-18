@@ -120,20 +120,6 @@ PY
 if test -f .git/MERGE_HEAD; then git commit -m '同步主线更新';
 elif ! git diff --cached --quiet; then git commit -m '更新界面构建产物'; fi
 target=$(git rev-parse HEAD)
-python - "$deployed_head" "$target" "$stage/.deployment-input.json" <<'PY'
-import json,re,subprocess,sys
-baseline,target,output=sys.argv[1:]
-data=subprocess.check_output(['git','log','--no-merges','--format=%H%x00%s%x00',baseline+'..'+target]).decode('utf8').replace('\n','').split('\x00')
-commits=[{'hash':data[index],'subject':data[index+1]} for index in range(0,len(data)-1,2)]
-try:
- old_notes=subprocess.check_output(['git','show',baseline+':src/custom/release-notes.mjs'],stderr=open('/dev/null','w')).decode('utf8')
- match=re.search(r'''version\s*:\s*['"]([^'"]+)''',old_notes)
- previous_manual=match.group(1) if match else None
-except subprocess.CalledProcessError:previous_manual=None
-with open(output,'wb') as stream:stream.write(json.dumps({'from':baseline,'to':target,'commits':commits,'previousManualVersion':previous_manual},ensure_ascii=False).encode('utf8'))
-PY
-chown "$CW_SYNC_UID:$CW_SYNC_GID" "$stage/.deployment-input.json"
-chroot --userspec="$CW_SYNC_UID:$CW_SYNC_GID" "$runtime" /usr/local/bin/node /stage/tools/deployment-release.mjs prepare /stage/.deployment-input.json /stage/.deployment-release.json
 remote_head=$(timeout 60 git ls-remote origin "refs/heads/$branch" | cut -f1)
 test "$remote_head" = "$origin_head" || { echo 'Origin changed during build; retry on next run'; exit 1; }
 timeout 180 git push origin "HEAD:refs/heads/$branch"
@@ -175,7 +161,6 @@ done
 test "$ready" = 1
 systemctl is-active "$CW_SYNC_SERVICE"
 sha256sum -c "$backup/preserved.sha256"
-chroot --userspec="$CW_SYNC_UID:$CW_SYNC_GID" "$runtime" /usr/local/bin/node /app/tools/deployment-release.mjs publish /stage/.deployment-release.json /app/data
 stopped=0
 umount "$runtime/stage"
 mounted=0

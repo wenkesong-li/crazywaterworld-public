@@ -17,7 +17,7 @@ import { watchMerchant } from './merchant-monitor.mjs';
 import { giftCodeStatus, giftCodeSummary, startGiftCodeBatch, startGiftCodes } from './gift-codes.mjs';
 import { publicGiftCodes, hasGiftCodeHistory } from './custom/gift-code-library.mjs';
 import { createGiftCodeAutomation } from './custom/gift-code-automation.mjs';
-import { createReleaseNotes } from './custom/release-notes.mjs';
+import { createUpdateService } from './custom/update-service.mjs';
 import {runtimeProgress, museumRuntimeStatus} from './runtime-progress.mjs';
 import {watchTreasureTravel} from './treasure-follow.mjs';
 import { watchGuildShipPushes } from './guild-ships.mjs';
@@ -172,7 +172,7 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
   const globalLog = [];
   const streams = new Set();
   const sessions = new Map();
-  const releaseNotes = createReleaseNotes(DATA_DIR);
+  const updateService = createUpdateService();
   let closing = false;
   let settingsWatchStarted = false;
   const resources = resourceUpdater || (resourceUpdates ? createResourceUpdater({ onEvent: ({ level, message }) => emit(null, level, message) }) : null);
@@ -1890,8 +1890,9 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
       if (payload.confirm !== true) throw new Error('这个操作会改动游戏里的状态，需要先确认');
     };
     const longRunning = /^(GET|POST) \/api\/(heroes|dailies|tasks|world|overview|loop)(\/|$)/.test(route);
-    if (route === 'GET /api/updates') { json(releaseNotes.view('local')); return; }
-    if (route === 'POST /api/updates/read') { json(releaseNotes.acknowledge('local', jsonBody().version)); return; }
+    if (route === 'GET /api/update/check') { json(await updateService.check()); return; }
+    if (route === 'POST /api/update/apply') { needConfirm(jsonBody()); json(updateService.start()); return; }
+    if (route === 'GET /api/update/progress') { json(updateService.progress()); return; }
     let scoped = null;
     let releaseWrite;
     // 所有账号相关的路由都先过这里：拿到账号、对应会话，长请求再挂个忙碌标记。

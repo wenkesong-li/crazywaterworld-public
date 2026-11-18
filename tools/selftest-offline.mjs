@@ -100,6 +100,7 @@ const cases = [
   ['selftest-douyin-game-auth.mjs'],
   ['selftest-douyin-login-http.mjs'],
   ['selftest-douyin-login-ui.mjs'],
+  ['selftest-update.mjs'],
 ];
 
 try {

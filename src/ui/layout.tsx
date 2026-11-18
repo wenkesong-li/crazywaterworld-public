@@ -1,6 +1,6 @@
 import * as React from "react"
 import { renderToStaticMarkup } from "react-dom/server"
-import { Boxes, Building2, CalendarDays, Check, ChevronDown, CircleUserRound, History, LayoutDashboard, Monitor, Moon, MoreHorizontal, ScrollText, Settings2, Ship, Sun, Swords, UsersRound, X } from "lucide-react"
+import { Boxes, Building2, CalendarDays, Check, ChevronDown, CircleUserRound, LayoutDashboard, Monitor, Moon, MoreHorizontal, RefreshCw, ScrollText, Settings2, Ship, Sun, Swords, UsersRound, X } from "lucide-react"
 import { Button } from "./button"
 import { Badge } from "./badge"
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "./card"
@@ -49,7 +49,7 @@ export function chrome() {
           <span id="loop-hint" className="sr-only" role="status" />
         </div>
         <span id="hint" className="warn" />
-        <Button id="release-notes-open" type="button" size="sm" variant="outline" aria-haspopup="dialog" aria-controls="release-notes-dialog" title="查看更新记录"><History aria-hidden="true" />更新记录</Button>
+        <Button id="update-open" type="button" size="sm" variant="outline" aria-haspopup="dialog" aria-controls="update-dialog" title="检查 GitHub 上的最新版本"><RefreshCw aria-hidden="true" />检查更新</Button>
         <div id="theme-picker" className="theme-picker">
           <Button id="theme-trigger" type="button" size="icon-sm" variant="outline" className="pointer-coarse:size-10" aria-label="切换主题，当前为跟随系统" title="切换主题，当前为跟随系统" aria-haspopup="menu" aria-controls="theme-menu" aria-expanded="false">
             {themes.map(([mode, , Icon]) => <span key={mode} data-theme-icon={mode} hidden={mode !== "system"}><Icon aria-hidden="true" /></span>)}

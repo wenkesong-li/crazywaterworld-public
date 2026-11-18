@@ -6,10 +6,9 @@ import { createLogAccountLabels } from './log-accounts.mjs';
 import { chrome, journal, dialogs, templates, giftCodesPage, overviewPage, manualPage, inventoryPage, heroesPage, lineupsPage, guildPage, activitiesPage, accountPage, stagePanel, settingsPage } from './ui/dist/console.mjs';
 const componentCss = readFileSync(new URL('./ui/dist/theme.css', import.meta.url), 'utf8');
 const consoleOverridesCss = readFileSync(new URL('./custom/console-overrides.css', import.meta.url), 'utf8');
-const releaseNotesCss = readFileSync(new URL('./custom/release-notes.css', import.meta.url), 'utf8');
 const giftLibraryCss = readFileSync(new URL('./custom/gift-code-library.css', import.meta.url), 'utf8');
 const wechatLoginCss = readFileSync(new URL('./custom/wechat-login.css', import.meta.url), 'utf8');
-const releaseNotesScript = readFileSync(new URL('./custom/release-notes-ui.js', import.meta.url), 'utf8');
+const updateScript = readFileSync(new URL('./custom/update-ui.js', import.meta.url), 'utf8');
 const consoleCss = readFileSync(new URL('./console.css', import.meta.url), 'utf8');
 const progressionScript = readFileSync(new URL('./ui/progression.js', import.meta.url), 'utf8');
 const lineupScript = readFileSync(new URL('./lineup-editor.js', import.meta.url), 'utf8');
@@ -50,7 +49,7 @@ export const PAGE = `<!doctype html>
 <meta name="format-detection" content="telephone=no">
 <script id="theme-init">${themeScript}</script>
 <style>@layer properties, theme, base, components, page, utilities; @layer page { ${consoleCss} ${settingsCss} ${appointmentsCss} ${lineupCss} ${siliconOverviewCss} ${resourceFieldsCss} } ${componentCss}</style>
-<style>${consoleOverridesCss} ${releaseNotesCss} ${giftLibraryCss} ${wechatLoginCss}</style>
+<style>${consoleOverridesCss} ${giftLibraryCss} ${wechatLoginCss}</style>
 </head>
 <body>
 ${chrome()}
@@ -1923,7 +1922,7 @@ ${douyinLoginScript}
 
 // ---- 添加账号引导 ----------------------------------------------------------
 ${accountAddScript}
-${releaseNotesScript}
+${updateScript}
 
 // ---- 页头账号选择 ----------------------------------------------------------
 ${accountPickerScript}
@@ -2015,7 +2014,7 @@ async function boot() {
     ? savedView.resource : selectedResource;
   activateConsolePage(button, resource);
   if (location.hash === '#journal') openJournal();
-  void initReleaseNotes();
+  void initUpdate();
 }
 // Coalesce related mutations before painting every account surface. The store
 // subscription also covers writes made by React or another subscribed view.
