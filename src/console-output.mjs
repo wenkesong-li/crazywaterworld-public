@@ -56,7 +56,10 @@ export function createConsoleOutput({ stdout = process.stdout, env = process.env
     let guidance = wrap(CONSOLE_GUIDANCE, width);
     if (title.length + guidance.length + 3 > rows) guidance = wrap('关闭网页可继续；保留窗口。Ctrl+C/关窗口即停止。', width);
     if (title.length + guidance.length + 3 > rows) return null;
-    const lines = [...title, ...guidance, '─'.repeat(width)];
+    // 地址渲染为 OSC 8 超链接并加粗高亮：支持的终端里可直接点开，其余终端显示彩色文本；
+    // 换行宽度按纯文本计算，转义序列不占宽度，不影响排版。
+    const linkAddress = text => `\u001b]8;;${text}\u0007\u001b[1;36m${text}\u001b[0m\u001b]8;;\u0007`;
+    const lines = [...title.map(line => line.includes(address) ? line.replace(address, linkAddress(address)) : line), ...guidance, '─'.repeat(width)];
     return { lines, top: lines.length + 1, bottom: rows, width };
   }
 

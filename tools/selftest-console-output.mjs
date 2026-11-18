@@ -19,6 +19,9 @@ class Terminal extends EventEmitter {
     this.chunks.push(text);
     if (this.isTTY) {
       for (let i = 0; i < text.length;) {
+        // OSC 序列（如地址的 OSC 8 超链接）整体吞掉，不占单元格。
+        const osc = /^\u001b\][^\u0007]*\u0007/.exec(text.slice(i));
+        if (osc) { i += osc[0].length; continue; }
         const command = /^\u001b\[([\d;]*)([A-Za-z])/.exec(text.slice(i));
         if (command) {
           const values = command[1].split(';').map(Number), kind = command[2]; i += command[0].length;
@@ -26,6 +29,7 @@ class Terminal extends EventEmitter {
           else if (kind === 'H') { this.row = (values[0] || 1) - 1; this.column = (values[1] || 1) - 1; }
           else if (kind === 'J') this.screen = Array.from({ length: this.rows }, () => Array(this.columns).fill(' '));
           else if (kind === 'K') this.screen[this.row].fill(' ');
+          else if (kind === 'm') { /* SGR 颜色/加粗不影响文本布局 */ }
           else assert.fail('未知终端命令 ' + command[0]);
           continue;
         }
@@ -69,6 +73,9 @@ await test('顶部地址与提示固定，大量日志及同屏stderr只滚动�
   sink.start(url); await flush();
   const top = terminal.top, header = terminal.lines().slice(0, top);
   assert(header.join('').includes(url)); assert(header.join('').includes('Ctrl+C'));
+  // 地址渲染为 OSC 8 超链接并加粗高亮；终端屏幕上仍是纯文本地址，排版不受转义序列影响。
+  assert(terminal.text().includes(`\u001b]8;;${url}\u0007`));
+  assert(terminal.text().includes(`\u001b[1;36m${url}\u001b[0m`));
   for (let i = 0; i < 100; i++) sink.write('运行日志第' + i + '轮');
   await flush();
   assert.deepEqual(terminal.lines().slice(0, top), header);
