@@ -101,6 +101,7 @@ const cases = [
   ['selftest-douyin-login-http.mjs'],
   ['selftest-douyin-login-ui.mjs'],
   ['selftest-update.mjs'],
+  ['selftest-release-notes.mjs'],
 ];
 
 try {

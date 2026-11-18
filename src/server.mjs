@@ -18,6 +18,7 @@ import { giftCodeStatus, giftCodeSummary, startGiftCodeBatch, startGiftCodes } f
 import { publicGiftCodes, hasGiftCodeHistory } from './custom/gift-code-library.mjs';
 import { createGiftCodeAutomation } from './custom/gift-code-automation.mjs';
 import { createUpdateService } from './custom/update-service.mjs';
+import { createReleaseNotes } from './custom/release-notes.mjs';
 import {runtimeProgress, museumRuntimeStatus} from './runtime-progress.mjs';
 import {watchTreasureTravel} from './treasure-follow.mjs';
 import { watchGuildShipPushes } from './guild-ships.mjs';
@@ -173,6 +174,7 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
   const streams = new Set();
   const sessions = new Map();
   const updateService = createUpdateService();
+  const releaseNotes = createReleaseNotes(DATA_DIR);
   let closing = false;
   let settingsWatchStarted = false;
   const resources = resourceUpdater || (resourceUpdates ? createResourceUpdater({ onEvent: ({ level, message }) => emit(null, level, message) }) : null);
@@ -1893,6 +1895,8 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
     if (route === 'GET /api/update/check') { json(await updateService.check()); return; }
     if (route === 'POST /api/update/apply') { needConfirm(jsonBody()); json(updateService.start()); return; }
     if (route === 'GET /api/update/progress') { json(updateService.progress()); return; }
+    if (route === 'GET /api/updates') { json(await releaseNotes.view()); return; }
+    if (route === 'POST /api/updates/read') { json(releaseNotes.acknowledge('local', jsonBody().id)); return; }
     let scoped = null;
     let releaseWrite;
     // 所有账号相关的路由都先过这里：拿到账号、对应会话，长请求再挂个忙碌标记。

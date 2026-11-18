@@ -9,6 +9,7 @@ const consoleOverridesCss = readFileSync(new URL('./custom/console-overrides.css
 const giftLibraryCss = readFileSync(new URL('./custom/gift-code-library.css', import.meta.url), 'utf8');
 const wechatLoginCss = readFileSync(new URL('./custom/wechat-login.css', import.meta.url), 'utf8');
 const updateScript = readFileSync(new URL('./custom/update-ui.js', import.meta.url), 'utf8');
+const releaseNotesScript = readFileSync(new URL('./custom/release-notes-ui.js', import.meta.url), 'utf8');
 const consoleCss = readFileSync(new URL('./console.css', import.meta.url), 'utf8');
 const progressionScript = readFileSync(new URL('./ui/progression.js', import.meta.url), 'utf8');
 const lineupScript = readFileSync(new URL('./lineup-editor.js', import.meta.url), 'utf8');
@@ -1923,6 +1924,7 @@ ${douyinLoginScript}
 // ---- 添加账号引导 ----------------------------------------------------------
 ${accountAddScript}
 ${updateScript}
+${releaseNotesScript}
 
 // ---- 页头账号选择 ----------------------------------------------------------
 ${accountPickerScript}
@@ -2015,6 +2017,7 @@ async function boot() {
   activateConsolePage(button, resource);
   if (location.hash === '#journal') openJournal();
   void initUpdate();
+  void initReleaseNotes();
 }
 // Coalesce related mutations before painting every account surface. The store
 // subscription also covers writes made by React or another subscribed view.
