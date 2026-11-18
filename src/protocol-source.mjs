@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { wechatPackageCandidates } from './platform/client-paths.mjs';
+import { wechatPackageCandidates, wechatUsersDirectory } from './platform/client-paths.mjs';
 import { decrypt, inspectArchive } from '../tools/wxapkg.mjs';
 
 export const PROTO_BUNDLE = path.resolve(import.meta.dirname, '../work/extracted/_src_chunks_/src/chunks/game.js');
@@ -14,6 +14,16 @@ export function protocolSourceInfo(bundlePath) {
   const cached = explicit ? null : wechatPackageCandidates(APPID, { includeIncomplete: true })[0];
   if (cached && !fs.existsSync(cached))
     throw new Error('微信游戏包 ' + path.basename(path.dirname(cached)) + ' 的协议分包尚未下载，请在电脑版微信打开游戏并进入游戏后重试');
+  if (!explicit && !cached) {
+    // 本机微信缓存里完全没有游戏包：列出搜索过的位置并给出两条出路，代替裸 ENOENT。
+    throw new Error([
+      '未找到本机微信的游戏协议包，已搜索：',
+      '  1) ' + wechatUsersDirectory(),
+      '  2) ' + PROTO_BUNDLE,
+      '解决方式一：在电脑版微信（4.x）中打开《疯狂水世界》并进入游戏一次，让微信下载协议分包后重试。',
+      '解决方式二：从其他机器拷贝 _src_chunks_.wxapkg，并设置 CW_PROTO_BUNDLE 指向该文件后重试。',
+    ].join('\n'));
+  }
   const file = path.resolve(explicit || cached || PROTO_BUNDLE);
   const stat = fs.statSync(file);
   if (!stat.isFile()) throw new Error('协议来源不是文件：' + file);
