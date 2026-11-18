@@ -1,4 +1,4 @@
-name: Build Windows portable ZIP
+name: Build portable ZIP
 
 on:
   workflow_dispatch:
@@ -14,20 +14,34 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+          - os: macos-latest
+            arch: arm64
+          - os: macos-latest
+            arch: x64
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Build and test portable ZIP
+      - name: Build and test portable ZIP (Windows)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: ./packaging/build-windows.ps1
+      - name: Build and test portable ZIP (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: packaging/build-macos.sh ${{ matrix.arch }}
       - name: Upload tested ZIP
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          path: output/crazywaterworld-win-x64.zip
+          path: output/crazywaterworld-*.zip
           archive: false
           if-no-files-found: error
           retention-days: 7
