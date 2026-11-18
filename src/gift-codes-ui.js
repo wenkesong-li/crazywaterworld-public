@@ -75,7 +75,7 @@ function paintGiftInitial(){
     if(!entry.eligible&&!entry.usage.some(row=>['queued','sending'].includes(row.status))&&!$('gift-show-processed').checked)continue;
     const usage=entry.usage.map(row=>row.title+'：'+(giftLabels[row.status]||'未兑换')).join('；');
     const counts={};for(const row of entry.usage){const status=giftLabels[row.status]||'未兑换';counts[status]=(counts[status]??0)+1;}
-    const status=entry.usage.length===1?(giftLabels[entry.usage[0].status]||'未兑换'):Object.entries(counts).map(([label,count])=>label+' '+count).join(' / ');
+    const status=entry.usage.length===1?(giftLabels[entry.usage[0].status]||'未兑换'):entry.usage.length?Object.entries(counts).map(([label,count])=>label+' '+count).join(' / '):'未连接账号';
     const availability=entry.eligible?(entry.usage.some(row=>row.status!=='unused')?'部分账号可用':entry.expiresAt?'未到期':'有效期待确认')
       :entry.usage.some(row=>['queued','sending'].includes(row.status))?'处理中':entry.usage.some(row=>row.status==='unknown')?'待确认，不重发':'已处理，不再兑换';
     const row=el('tr');[entry.code,availability,status,entry.expiresAt||'来源未注明',entry.manual?'个人添加':'公共码库'].forEach((value,index)=>{const cell=el('td','',value);cell.setAttribute('data-label',['礼包码','可用状态','使用状态','到期日期','来源 / 操作'][index]);row.append(cell);});row.children[2].title=usage;table.append(row);

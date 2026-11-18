@@ -2978,6 +2978,12 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
           :parsed.searchParams.get('account')?[resolve(parsed).account.id]:[...known.keys()].slice(0,1);
         if(!Array.isArray(selected)||selected.some(id=>typeof id!=='string'||!known.has(id)))throw Error('无权查看所选账号的礼包码');
         if(loading){try{await publicGiftCodes.refresh({force:true});}catch(error){if(!publicGiftCodes.view().lastSyncedAt)throw error;}}
+        // 还没有添加任何游戏账号时也允许载入公共码库查看：不带账号使用状态，添加账号后再按账号兑换。
+        if(!known.size){
+          const rows=publicGiftCodes.entries().map(entry=>({...entry,usage:[],eligible:true}));
+          const catalog=publicGiftCodes.view();
+          json({...catalog,tryCodes:rows.map(row=>row.code),displayRows:rows,available:rows.length});if(loading)void giftAutomation.check();return;
+        }
         const available=new Set(),display=new Map();
         for(const id of new Set(selected)){
           const {rows}=giftCodeStatus(id);publicGiftCodes.reconcile(rows);const usable=new Set(publicGiftCodes.available(rows,id));
