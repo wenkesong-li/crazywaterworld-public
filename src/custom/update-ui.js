@@ -44,6 +44,14 @@ async function initUpdate() {
       confirmButton.hidden = true;
       return;
     }
+    if (result.diverged) {
+      const wrap = document.createElement('div');
+      wrap.append(paragraph('本地代码与上游已分叉，无法一键快进更新。'));
+      wrap.append(paragraph('本地包含上游没有的自有提交，同时上游也有新提交。请手动合并上游改动，或重新克隆最新版本。', 'update-hint'));
+      setBody(wrap);
+      confirmButton.hidden = true;
+      return;
+    }
     const wrap = document.createElement('div');
     wrap.append(paragraph('发现新版本：' + short(result.current) + ' → ' + short(result.remote)));
     if (result.commits?.length) {

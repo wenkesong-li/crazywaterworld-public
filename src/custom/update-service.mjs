@@ -73,9 +73,14 @@ export function createUpdateService({
     if (remoteSha === current) return { available: true, upToDate: true, current };
     try {
       runGitSync(root, ['fetch', '--quiet', remote, branch], gitExecutable);
+      // 比较祖先关系，区分“可以快进的落后”和“本地带自有提交的分叉”：
+      // 本地已包含上游全部提交（分发自带定制提交、上游未动）时不误报新版本。
+      const base = runGitSync(root, ['merge-base', 'HEAD', 'FETCH_HEAD'], gitExecutable).trim();
+      if (base === remoteSha) return { available: true, upToDate: true, current };
       const log = runGitSync(root, ['log', '--oneline', '--no-decorate', 'HEAD..FETCH_HEAD'], gitExecutable).trim();
       const commits = log ? log.split('\n').slice(0, 100) : [];
-      return { available: true, upToDate: false, current, remote: remoteSha, commits };
+      const diverged = base !== current;
+      return { available: true, upToDate: false, diverged, current, remote: remoteSha, commits };
     } catch (error) {
       return { available: false, reason: '拉取更新信息失败：' + error.message, current };
     }

@@ -81,6 +81,27 @@ try {
   assert.equal(idle.done, true);
   console.log('通过：更新完成后进度接口返回完成状态');
 
+  // 分发版自带本地提交而上游未动时，不误报“发现新版本”。
+  fs.writeFileSync(path.join(work, 'version.txt'), 'v2-custom\n');
+  git(['add', '.'], work);
+  git(['commit', '-m', '分发定制提交'], work);
+  const ahead = await service.check();
+  assert.equal(ahead.available, true);
+  assert.equal(ahead.upToDate, true, '本地已包含上游全部提交时应报告最新');
+  console.log('通过：本地自带定制提交且上游未动时不误报新版本');
+
+  // 上游继续前进后形成分叉：明确报告分叉而不是让一键更新空转失败。
+  fs.writeFileSync(path.join(dev, 'version.txt'), 'v3\n');
+  git(['add', '.'], dev);
+  git(['commit', '-m', '上游新提交'], dev);
+  git(['push', 'origin', 'main'], dev);
+  const fork = await service.check();
+  assert.equal(fork.available, true);
+  assert.equal(fork.upToDate, false);
+  assert.equal(fork.diverged, true);
+  assert.ok(fork.commits.some(line => line.includes('上游新提交')));
+  console.log('通过：本地与上游分叉时明确报告并给出出路');
+
   // 本地有未提交修改时拒绝更新，避免覆盖用户改动。
   fs.writeFileSync(path.join(work, 'local-edit.txt'), 'dirty\n');
   const refused = service.start();
@@ -111,7 +132,7 @@ try {
   assert.ok(noGit.reason.includes('未检测到 git'));
   console.log('通过：缺少 git 程序时提示安装 Git');
 
-  console.log('检查更新专项 7/7 通过');
+  console.log('检查更新专项 9/9 通过');
 } finally {
   fs.rmSync(base, { recursive: true, force: true });
 }
