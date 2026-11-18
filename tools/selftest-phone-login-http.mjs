@@ -171,8 +171,7 @@ globalThis.fetch = async (url, options) => {
 };
 
 const app = createConsole({ port: 0,
-  protocol: { OnWaterRequest: true, OnWaterResponse: true, AllItemRequest: true, AllItemResponse: true },
-  captureController: { inspectCaptureRecovery: () => ({ pending: false }) } });
+  protocol: { OnWaterRequest: true, OnWaterResponse: true, AllItemRequest: true, AllItemResponse: true } });
 let closed = false;
 try {
   const root = await app.listen();

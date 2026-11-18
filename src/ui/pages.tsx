@@ -1,4 +1,5 @@
 import * as React from "react"
+import { ConsoleUsersDialog } from "./custom/console-users-dialog"
 import { renderToStaticMarkup } from "react-dom/server"
 import { Button } from "./button"
 import { Card, CardAction, CardHeader, CardTitle, CardContent } from "./card"
@@ -7,7 +8,7 @@ import { Switch } from "./switch"
 import { HelpTip } from "./help-tip"
 import { Badge } from "./badge"
 import { DialogFooter, DialogHeader, DialogTitle } from "./dialog"
-import { MessageCircle, Music2, Plus, QrCode, Smartphone, X } from "lucide-react"
+import { Plus, QrCode, Smartphone, Music2, X } from "lucide-react"
 
 function Panel({title, help, titleAfter, children}: {title: string; help?: string; titleAfter?: React.ReactNode; children: React.ReactNode}) {
   return <Card><CardHeader><CardTitle className="title-with-help">{title}{help && <HelpTip title={title}>{help}</HelpTip>}</CardTitle>{titleAfter && <CardAction className="row-span-1 self-center max-md:col-span-2 max-md:col-start-1 max-md:row-start-2 max-md:justify-self-start">{titleAfter}</CardAction>}</CardHeader><CardContent>{children}</CardContent></Card>
@@ -19,15 +20,32 @@ function Option({id, label, checked = false}: {id: string; label: string; checke
 
 export function giftCodesPage() {
   return renderToStaticMarkup(<div className="grid gap-3">
-    <Panel title="礼包兑换" help="每个账号独立排队，兑换请求逐个发送。账号登录失败或结果未知只停止该账号；任一账号遇到服务器限频时，同批尚未发送的账号全部停止，之后可重新提交。"><label htmlFor="gift-code-input">礼包码（换行或逗号分隔）</label>
-      <textarea id="gift-code-input" rows={3} maxLength={12000} className="w-full" placeholder="每批最多100个" />
-      <div className="bar"><Button type="button" variant="outline" size="sm" id="gift-load-initial">载入初始码</Button><span id="gift-code-initial-note" className="dim" role="status" /></div>
+    <Panel title="礼包兑换" help="每个账号独立排队，兑换请求逐个发送。账号登录失败或结果未知只停止该账号；任一账号遇到服务器限频时，同批尚未发送的账号全部停止，之后可继续提交。">
+      <div className="bar"><Button type="button" variant="outline" size="sm" id="gift-load-initial">载入未兑换公共码</Button><Button type="button" variant="outline" size="sm" id="gift-add-row">新增礼包码行</Button><label><input id="gift-show-processed" type="checkbox" /> 显示已处理</label></div>
+      <p id="gift-code-initial-note" className="dim" role="status" />
+      <div className="gift-library-table"><table><thead><tr><th>礼包码</th><th>可用状态</th><th>使用状态</th><th>到期日期（北京时间）</th><th>来源 / 操作</th></tr></thead><tbody id="gift-code-library-rows" /><tbody id="gift-code-manual-rows" /></table></div>
+      <p className="dim">新增行仅保存到勾选的账号，自动兑换开启后会自动处理。有效期留空表示未注明，需由游戏确认；明确过期会全局下架。</p>
       <fieldset className="gift-accounts"><legend>兑换账号</legend>
         <div className="bar"><Button variant="outline" size="sm" id="gift-select-all">全选</Button><Button variant="outline" size="sm" id="gift-select-none">清空</Button><span id="gift-selected-count" className="dim" /></div>
         <div id="gift-account-list" className="gift-account-list" />
-        <p className="dim">未连接的账号会自动登录，可能把正在玩的游戏顶下线，兑换后保持连接。已暂停的账号不能选择。</p>
+        <p className="dim">自动兑换默认关闭。每天8点同步，当天已抓取则直接载入；新账号也能兑换历史有效码。已兑换、待确认的码不重发，限频及未发送的余码会续兑。</p>
+        <p className="dim">暂停时可维护礼包码，恢复后才兑换；共享游戏账号共用开关。未连接会自动登录，可能将正在玩的游戏顶下线。</p>
       </fieldset>
       <div className="bar"><Button id="gift-code-start">开始兑换</Button><span id="gift-code-state" role="status" /></div></Panel>
+    <Panel title="兑换记录">
+      <div className="bar gift-record-toolbar">
+        <label htmlFor="gift-record-account">查看账号</label><select id="gift-record-account" />
+        <label htmlFor="gift-record-status">状态</label><select id="gift-record-status" defaultValue="exclude-invalid">
+          <option value="exclude-invalid">排除失效/不可用</option><option value="all">全部状态</option><option value="invalid">失效/不可用</option>
+          <option value="retryable">可手动重试</option><option value="success">兑换成功</option><option value="used">已兑换</option><option value="rejected">服务器拒绝</option>
+          <option value="unknown">待确认</option><option value="skipped">未发送</option><option value="queued">待兑换</option><option value="sending">兑换中</option>
+        </select><Button id="gift-record-export" variant="outline">导出 CSV</Button>
+      </div>
+      <p className="dim">失效/不可用包含过期、无效、不在有效期、达到兑换上限及已由其他账号兑换。可手动重试包含限频及未识别提示码的明确拒绝；成功、已兑换、待确认及明确失效的码不可重试。导出包含当前账号和状态条件下的全部记录。</p>
+      <p id="gift-record-notice" className="dim" role="status" aria-live="polite" />
+      <div className="overflow-auto"><table><thead><tr>{['礼包码','状态','结果','时间','操作'].map(t=><th key={t}>{t}</th>)}</tr></thead><tbody id="gift-code-history" /></table></div>
+      <div className="bar"><label htmlFor="gift-page-size">每页</label><select id="gift-page-size" defaultValue="10">{[10,20,50,100].map(n=><option key={n} value={n}>{n} 条</option>)}</select><Button variant="outline" id="gift-prev">上一页</Button><span id="gift-page" role="status" /><Button variant="outline" id="gift-next">下一页</Button></div>
+    </Panel>
   </div>)
 }
 
@@ -168,15 +186,25 @@ export function lineupsPage() {
 export function accountPage() {
   return renderToStaticMarkup(<div className="account-page">
     <div className="account-page-heading">
-      <div className="account-page-title"><h2 className="text-xl font-semibold">账号</h2><span id="account-count" className="dim" aria-live="polite">正在读取</span></div>
+      <div className="account-page-title"><h2 className="text-xl font-semibold">账号</h2><span id="account-count" className="dim" aria-live="polite">正在读取</span><span id="console-identity" className="dim" /></div>
       <div className="account-page-actions">
-        <Button id="import-accounts" type="button" variant="outline">导入账号</Button>
+        <form method="post" action="/auth/logout"><Button type="submit" variant="outline">退出登录</Button></form>
+        <Button data-console-admin="true" id="console-users-open" type="button" variant="outline">后台用户管理</Button>
+        <Button data-console-admin="true" id="import-accounts" type="button" variant="outline">导入账号</Button>
         <input id="import-accounts-file" type="file" accept=".json,application/json" aria-label="选择账号备份文件" hidden />
         <Button id="export-accounts" type="button" variant="outline" aria-haspopup="dialog" aria-controls="account-export-dialog">导出账号</Button>
-        <Button id="account-add" type="button" aria-haspopup="dialog" aria-controls="account-add-dialog"><Plus aria-hidden="true" />添加账号</Button>
+        <Button data-console-admin="true" id="account-add" type="button" aria-haspopup="dialog" aria-controls="account-add-dialog"><Plus aria-hidden="true" />添加账号</Button>
       </div>
     </div>
+    <div data-console-admin="true" className="account-login-shortcuts" role="group" aria-label="快速添加账号">
+      <Button id="account-add-wechat-shortcut" type="button" variant="outline"><QrCode aria-hidden="true" />微信扫码登录</Button>
+      <Button id="account-add-alipay-shortcut" type="button" variant="outline"><QrCode aria-hidden="true" />支付宝扫码登录</Button>
+      <Button id="account-add-phone-shortcut" type="button" variant="outline"><Smartphone aria-hidden="true" />手机号登录</Button>
+    </div>
+    <p className="dim">可连续添加多个账号，每个账号独立连接和挂机。切换当前查看的账号不会停止其他账号；可在账号卡片中单独暂停或恢复托管。</p>
     <p className="dim">新账号默认不挂机，点击「开始挂机」后才会持续运行；每个账号可通过「登录设置」单独配置自动重连策略。</p>
+    <p id="console-assignment-note" className="dim" hidden>仅显示分配给你的游戏账号。共享同一游戏账号的用户使用相同配置和运行状态，修改配置或暂停会影响共享该账号的用户。</p>
+    <ConsoleUsersDialog />
     <p id="account-add-notice" className="dim" role="status" hidden />
     <p id="account-transfer-notice" className="dim" role="status" aria-live="polite" hidden />
     <div id="accounts" className="account-grid" />
@@ -221,23 +249,32 @@ export function accountPage() {
       <div className="account-add-body">
         <p id="account-add-feedback" className="phone-feedback" role="status" aria-live="polite" aria-atomic="true" />
         <div id="account-add-channels" className="account-channel-grid">
+          <Button type="button" variant="outline" className="account-channel h-auto whitespace-normal text-left" data-login-channel="douyin-qr"><Music2 aria-hidden="true" /><span><strong>抖音扫码</strong><span>扫码登录，选择游戏角色</span></span></Button>
+          <Button type="button" variant="outline" className="account-channel h-auto whitespace-normal text-left" data-login-channel="wechat"><QrCode aria-hidden="true" /><span><strong>微信扫码登录</strong><span>获取二维码，用手机微信授权</span></span></Button>
           <Button type="button" variant="outline" className="account-channel h-auto pointer-coarse:h-auto items-start justify-start gap-3.5 p-5 has-[>svg]:px-5 whitespace-normal text-left" data-login-channel="alipay"><QrCode className="size-[22px]" aria-hidden="true" /><span><strong>支付宝</strong><span>扫码登录，选择游戏角色</span></span></Button>
           <Button type="button" variant="outline" className="account-channel h-auto pointer-coarse:h-auto items-start justify-start gap-3.5 p-5 has-[>svg]:px-5 whitespace-normal text-left" data-login-channel="phone"><Smartphone className="size-[22px]" aria-hidden="true" /><span><strong>益世界 APP</strong><span>账号密码或短信验证码</span></span></Button>
-          <Button type="button" variant="outline" className="account-channel h-auto pointer-coarse:h-auto items-start justify-start gap-3.5 p-5 has-[>svg]:px-5 whitespace-normal text-left" data-login-channel="wechat"><MessageCircle className="size-[22px]" aria-hidden="true" /><span><strong>微信小游戏</strong><span>从电脑微信读取登录信息</span></span></Button>
-          <Button type="button" variant="outline" className="account-channel h-auto pointer-coarse:h-auto items-start justify-start gap-3.5 p-5 has-[>svg]:px-5 whitespace-normal text-left" data-login-channel="douyin-qr"><Music2 className="size-[22px]" aria-hidden="true" /><span><strong>抖音扫码</strong><span>扫码登录，选择游戏角色</span></span></Button>
-          <details className="col-span-full text-sm"><summary className="cursor-pointer py-2">备用登录方式</summary><Button type="button" variant="outline" className="mt-2 w-full justify-start whitespace-normal" data-login-channel="douyin">电脑抖音采集</Button><p className="dim mt-2">从已登录的电脑抖音读取，或恢复上次未完成的采集。</p></details>
         </div>
+        <section id="account-add-wechat" hidden>
+          <div className="bar"><Button id="wechat-start" type="button">获取二维码</Button><Button id="wechat-roles-retry" type="button" variant="outline" hidden>重新读取角色</Button></div>
+          <p className="dim">使用手机微信扫一扫并核对应用宝授权提示，无需安装证书。授权后会登录游戏读取角色，可能将正在玩的同一账号顶下线。</p>
+          <img id="wechat-qr" className="wechat-login-qr" alt="微信登录二维码" width="260" height="260" hidden />
+          <p id="wechat-hint" className="phone-feedback" role="status" aria-live="polite" />
+          <div id="wechat-roles" />
+          <Button id="wechat-save" type="button" hidden>保存所选角色</Button>
+        </section>
         <section id="account-add-alipay" hidden>
           <div id="alipay-flow" className="alipay-flow">
             <div className="bar"><Button id="alipay-start" type="button">生成二维码</Button><Button id="alipay-cancel" type="button" variant="outline" hidden>取消</Button></div>
+            <a id="alipay-open-app" className="alipay-open-app" hidden target="_blank" rel="noopener noreferrer">打开支付宝登录</a>
+            <p className="dim">手机上点击「打开支付宝登录」，确认授权后返回此页选择角色。无法跳转时，可截图二维码，在支付宝扫一扫中从相册识别；微信内请用系统浏览器打开。</p>
             <img id="alipay-qr" className="alipay-qr" alt="支付宝扫码登录二维码" width="256" height="256" hidden />
-            <p id="alipay-hint" className="phone-feedback dim" role="status" aria-live="polite" aria-atomic="true">点击「生成二维码」，然后使用支付宝扫一扫。</p>
+            <p id="alipay-hint" className="phone-feedback dim" role="status" aria-live="polite" aria-atomic="true">点击「生成二维码」，然后使用支付宝扫一扫。手机上可截屏后在支付宝扫一扫中从相册识别。</p>
             <div id="alipay-roles" hidden />
             <p id="alipay-result" hidden />
             <p id="alipay-expiry" className="dim" />
             <div className="bar"><Button id="alipay-save" type="button" hidden disabled>保存所选角色</Button><Button id="alipay-roles-retry" type="button" variant="outline" hidden>重新读取角色</Button></div>
           </div>
-          <p className="dim">本机需安装 Edge 或 Chrome。扫码后会进入游戏，可能让同账号的游戏客户端下线。</p>
+          <p className="dim">首次扫码会自动准备浏览器。扫码后选择角色并保存，新账号保存后可在账号卡片中点击「开始挂机」。</p>
         </section>
         <section id="account-add-douyin" hidden>
           <div id="douyin-flow" className="alipay-flow">
@@ -300,11 +337,6 @@ export function accountPage() {
               <p className="dim">密码和验证码仅用于本次验证。读取角色时会登录游戏，可能让同账号的游戏客户端下线。</p>
             </aside>
           </div>
-        </section>
-        <section id="account-add-capture" hidden>
-          <div className="bar"><Button id="cap-start" type="button" hidden>开始读取微信账号</Button><Button id="cap-douyin" type="button" hidden>开始读取抖音账号</Button><Button id="cap-stop" type="button" variant="outline" hidden>停止读取</Button><Button id="cap-recover" type="button" variant="outline" hidden>恢复上次采集残留</Button></div>
-          <p id="cap-hint" className="phone-feedback" role="status" aria-live="polite" />
-          <div id="cap-box" />
         </section>
       </div>
       <DialogFooter className="account-add-footer"><Button id="account-add-done" type="button" hidden>完成</Button><Button id="account-add-back" type="button" variant="outline" hidden>返回</Button></DialogFooter>

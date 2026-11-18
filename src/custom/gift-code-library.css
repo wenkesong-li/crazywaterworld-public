@@ -1,0 +1,22 @@
+.gift-auto-toggle { padding:5px 10px; border:1px solid var(--border); border-radius:8px; background:var(--card); color:var(--foreground); font-size:12px; white-space:nowrap }
+.gift-auto-toggle[aria-pressed=true] { background:var(--primary); border-color:var(--primary); color:var(--primary-foreground) }
+.gift-auto-toggle:disabled { opacity:.6; cursor:wait }
+.gift-library-table { max-height:320px; overflow:auto; margin-top:12px; border:1px solid var(--border); border-radius:10px }
+.gift-library-table table { min-width:520px; width:100% }
+.gift-library-table th { position:sticky; top:0; background:var(--card) }
+.gift-library-table td { overflow-wrap:anywhere }
+.gift-manual-actions { display:flex; gap:6px }
+.gift-library-table input { max-width:100%; min-width:0 }
+@media(max-width:600px){
+ .gift-library-table table { min-width:0 }
+ .gift-library-table thead { display:none }
+ .gift-library-table tbody { display:block }
+ .gift-library-table tr { display:block; padding:10px 12px; border-bottom:1px solid var(--border) }
+ .gift-library-table td { display:grid; grid-template-columns:84px minmax(0,1fr); gap:8px; padding:5px 0; border:0; font-size:13px }
+ .gift-library-table td::before { content:attr(data-label); color:var(--muted-foreground); font-size:12px }
+ .gift-library-table td:first-child { font-weight:600 }
+ .gift-library-table td[colspan] { display:block }
+ .gift-library-table td[colspan]::before { display:none }
+ .gift-library-table input { width:100% }
+}
+@media(max-width:480px){ .gift-account { gap:8px; padding-block:10px } .gift-account>.dim { flex-basis:100%; padding-left:24px } .gift-auto-toggle { min-height:36px; margin-left:auto } }

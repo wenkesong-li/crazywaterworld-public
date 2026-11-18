@@ -22,7 +22,7 @@ const states = new Map();
 const protocol = Object.fromEntries(['OnWaterRequest', 'OnWaterResponse', 'AllItemRequest', 'AllItemResponse', 'GotAchievementRewardRequest']
   .map(name => [name, true]));
 const tasks = Object.fromEntries(automationTasks.map(task => [task.key, task.key === 'mail']));
-let app, root, capturedLogin, sequence = 0, passed = 0;
+let app, root, sequence = 0, passed = 0;
 
 Object.defineProperty(GameClient.prototype, 'connected', { get() { return live.has(this); } });
 GameClient.prototype.connect = async function (login) {
@@ -74,11 +74,6 @@ function account(automation = {}) {
 async function launch(accounts, { recoveryDelayMs = 25 } = {}) {
   if (accounts) saveStore({ activeId: accounts[0]?.id ?? null, accounts: accounts.map(entry => entry.row) });
   app = createConsole({ port: 0, protocol, recoveryDelayMs: () => recoveryDelayMs,
-    captureController: {
-      inspectCaptureRecovery: () => ({ pending: false }),
-      captureState: () => ({ running: false }),
-      startCapture: async options => { capturedLogin = options.onLogin; },
-    },
   });
   root = await app.listen();
 }
@@ -576,92 +571,6 @@ try {
     await waitFor(() => f.state.logins === 2 && session(f.id).loop.running && session(f.id).loop.completed >= 1, '重连后自动挂机');
     assert.equal(session(f.id).loginBlocked, false);
     assert.equal(saved(f.id).autoStart, true);
-  });
-
-  await test('新采集账号默认停止，手动开启后运行，暂停与刷新凭证保留关闭选择', async () => {
-    const f = account();
-    saveAutomationSettings(f.id, settingsFromNative(tasks, { everySeconds: 3600 }), { revision: 0 });
-    await launch([]);
-    await api('', 'capture/start', {});
-    await capturedLogin({ url: f.row.url, body: f.row.login });
-    assert.equal(saved(f.id).autoStart, false);
-    assert.equal(saved(f.id).enabled, false);
-    assert.equal(session(f.id).loop.running, false);
-    assert.equal(f.state.requests.includes('EmailBoxRequest'), false);
-    await shutdown();
-    const metadataLogins = f.state.logins;
-    await launch();
-    assert.equal((await api(f.id, 'loop')).running, false);
-    assert.equal(f.state.logins, metadataLogins);
-    await api('', 'capture/start', {});
-    await api(f.id, 'accounts/pause', { paused: false, start: true });
-    await running(f.id);
-    assert.equal(saved(f.id).autoStart, true);
-    await stop(f.id);
-    await capturedLogin({ url: f.row.url, body: f.row.login });
-    assert.equal(session(f.id).loop.running, false);
-    assert.equal(saved(f.id).autoStart, false);
-  });
-
-  await test('新采集账号资料读取失败不自动挂机，明确开启后才重试连接', async () => {
-    const f = account();
-    f.state.loginFailures = 1;
-    saveAutomationSettings(f.id, settingsFromNative(tasks, { everySeconds: 3600 }), { revision: 0 });
-    await launch([]);
-    await api('', 'capture/start', {});
-    await capturedLogin({ url: f.row.url, body: f.row.login });
-    await sleep(100);
-    assert.equal(f.state.logins, 1);
-    assert.equal(saved(f.id).autoStart, false);
-    assert.equal(session(f.id).loop.running, false);
-    await api(f.id, 'accounts/pause', { paused: false, start: true });
-    await running(f.id);
-    assert.equal(f.state.logins, 2);
-    assert.equal(saved(f.id).autoStart, true);
-  });
-
-  await test('顶号停止后采集到新凭证自动恢复挂机并解除旧登录保护', async () => {
-    const f = account({ autoStart: true });
-    await launch([f]);
-    await running(f.id);
-    await configureReconnect(f.id, false);
-    const job = session(f.id).loop.job;
-    kick(f.id);
-    await job;
-    assert.equal(saved(f.id).loginBlocked, true);
-    await api(f.id, 'capture/start', {});
-    await capturedLogin({ url: f.row.url, body: f.row.login });
-    await running(f.id);
-    assert.equal(f.state.logins, 2);
-    assert.equal(saved(f.id).loginBlocked, false);
-    assert.equal(saved(f.id).autoStart, true);
-  });
-
-  await test('刷新凭证遵守托管暂停和已安排的顶号重连时间', async () => {
-    const f = account({ autoStart: true });
-    await launch([f], { recoveryDelayMs: 250 });
-    await running(f.id);
-    const firstJob = session(f.id).loop.job;
-    await api(f.id, 'accounts/pause', { paused: true });
-    await firstJob;
-    await api(f.id, 'capture/start', {});
-    await capturedLogin({ url: f.row.url, body: f.row.login });
-    assert.equal(session(f.id).loop.running, false);
-    assert.equal(session(f.id).paused, true);
-    assert.equal(f.state.logins, 1);
-    assert.equal(saved(f.id).autoStart, true);
-    await api(f.id, 'accounts/pause', { paused: false });
-    await running(f.id);
-    await configureReconnect(f.id, true);
-    const secondJob = session(f.id).loop.job;
-    kick(f.id);
-    const deadline = session(f.id).loginRecovery.nextAttemptAt;
-    await capturedLogin({ url: f.row.url, body: f.row.login });
-    assert.equal(session(f.id).loginRecovery.nextAttemptAt, deadline);
-    assert.equal(session(f.id).loop.job, secondJob);
-    assert.equal(f.state.logins, 2);
-    await waitFor(() => f.state.logins === 3 && session(f.id).loop.completed === 2, '原重连等待结束后继续挂机');
-    assert.equal(session(f.id).loop.job, secondJob);
   });
 
   console.log(`默认自动挂机专项 ${passed}/${passed} 通过`);

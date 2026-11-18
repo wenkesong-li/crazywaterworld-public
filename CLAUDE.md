@@ -61,7 +61,7 @@ npm run sync-art              # 同步素材；缓存缺图可加 -- --fetch
 - `client.mjs` 的 `GameClient` 管理 WebSocket、序号、Ack、心跳和请求匹配；帧格式见 `codec.mjs`、`frame-header.mjs`、`lz4.mjs`。有响应的请求用 `request`；`sendWatch` 未收到 prompt 也不能据此确认实际结果。
 - 玩法模块先读取状态，再计算计划，最后在发送前复查。明确未发送可释放预留；超时或结果不明需保留记录，按对应玩法查询确认。
 - `loop.mjs` 编排自动任务，结合开关、状态、到期时间、推送和账本决定何时复查，并非第二轮计划必然为空。CLI 与控制台共用它，是否传 `isEnabled` 会影响路径，修改需检查两侧。
-- `challenge-automation.mjs` 接入每轮主线/闯关与试炼挑战，海盗讨伐在 `checkDispatch` 中按舰队优先级每轮最多派遣一次。`loop.challengeRun` 跨重连保留失败计数与海盗用量，达到失败上限不因换轮重试；重新开始挂机才创建新计数。挂机主线与试炼共用 `progression` 配置和失败上限，旧 `schedule.stageAuto` 迁移到 `progression.mainline`；挑战页手动参数独立。`battle-pacing.mjs` 在账号队列中为手动/自动主线和试炼共用 5 秒间隔，等待后复查开关。自动与手动相互避让，明确拒绝不计战败，未知战果不能重发。
+- `challenge-automation.mjs` 接入每轮主线/闯关与试炼挑战，海盗讨伐在 `checkDispatch` 中按舰队优先级每轮最多派遣一次。`loop.challengeRun` 跨重连保留失败计数与海盗预算，达到失败上限不因换轮重试；重新开始挂机才创建新计数。挂机主线与试炼共用 `progression` 配置和失败上限，旧 `schedule.stageAuto` 迁移到 `progression.mainline`；挑战页手动参数独立。`battle-pacing.mjs` 在账号队列中为手动/自动主线和试炼共用 5 秒间隔，等待后复查开关。自动与手动相互避让，明确拒绝不计战败，未知战果不能重发。
 - `server.mjs` 管理 HTTP API 与账号会话；同账号手动和挂机写操作经 `enqueue` 串行执行，新增写路由也必须接入。暂停、切号或等待期间关闭开关后，发送前再次检查。
 - 挂机一轮是一个 `enqueue` 任务，可持续一分钟以上。新增只读路由用 `readJob` 或 `progressionJob(..., { read: true })`，队列忙时经 `GameClient.interleaveRead` 插在两次请求之间。`PromptResponse` 没有请求编号，不能让读取与其他请求同时在途；这条通道只能用于确实不改变游戏状态的读取。
 - 网页仅控制和订阅日志，关闭网页不停止后台 `loop.job`。业务日志经 `createConsole({ onLog })` 输出到 CLI；日志回调和 SSE 异常不能影响游戏任务，显式关闭控制台时再关闭 SSE。验证使用 `selftest-console-background.mjs` 的隔离账号与假客户端。
@@ -93,7 +93,7 @@ npm run sync-art              # 同步素材；缓存缺图可加 -- --fetch
 3. 在 `loop.mjs` 接入实际执行与 `report`，通过 `reward-schedule` 或模块调度控制复查；手动日常单项还涉及 `daily-single.mjs`。报告明确区分完成、已发送、跳过与失败。
 4. 新增路由在 `operation-labels.mjs` 补中文名称；测试放入 core、progression 或 extra，并更新用户文档。
 
-装备自动化由 `forge.enabled` 总控，`forge.collect/craft` 分别控制领取和续产，随主循环检查；旧配置缺省两项均为 true，保持原行为。`forge.nativeAuto` 默认 false，开启后同步所选工厂的游戏原生开关，本组工具领取、续产、分解及资源策略均暂停；关闭模式只撤销本工具此前开启的原生开关，回读确认后才接续。总控暂停和停止挂机不关闭游戏原生开关。`schedule.equipmentCollect/equipmentCraft` 仅兼容旧配置，归一化为关闭，不再暴露控制或执行旧策略。原有 `schedule.guildOrders/radarAuto/radarRepair/museumCollect/museumExplore/petCollect/petBreed` 独立保存，不强行映射成需要舰队、配方等参数的新模块。对应详细模块有效开启时接管相同功能，避免双跑；停用详细模块后可恢复旧规则。周订单手动、自动和活动入口统一调用 `activities.mjs` 的 `runWeekOrder`，共用持久防重键和材料预留。
+装备领取与续产统一由 `forge.enabled` 控制，随主循环检查；`schedule.equipmentCollect/equipmentCraft` 仅兼容旧配置，归一化为关闭，不再暴露控制或执行旧策略。原有 `schedule.guildOrders/radarAuto/radarRepair/museumCollect/museumExplore/petCollect/petBreed` 独立保存，不强行映射成需要舰队、配方等参数的新模块。对应详细模块有效开启时接管相同功能，避免双跑；停用详细模块后可恢复旧规则。周订单手动、自动和活动入口统一调用 `activities.mjs` 的 `runWeekOrder`，共用持久防重键和材料预留。
 
 门控有各自范围：`loop.world` 管基地，`loop.dailies` 管招募、点金、竞技场等日常动作，英雄自动养成需要 `loop.heroes && heroes.enabled`。免费领奖有独立开关。新增资源消费应由用户主动开启，海商王走商 `merchantTrade`、风采投票 `beautyVotes` 和罗盘用券 `compassSpin` 默认 false；不要笼统把所有“活动”都当成免费领奖。
 
@@ -102,7 +102,6 @@ npm run sync-art              # 同步素材；缓存缺图可加 -- --fetch
 - `automation-settings.mjs` 管理设置与显式版本迁移，`usage-ledger.mjs` 管理账本，原模块兼容导出账本接口。`json-store.mjs` 为完整读改写提供同步跨进程互斥和原子落盘。导出只含设置，兼容旧 `crazywaterword-automation` 格式，不能导出凭据或账本。
 - `createUsageLedger` 在发送前持久占用预算，确认后登记，明确未发送或拒绝才取消。日计数按北京时间换日，带 `uniqueKey` 的未知 pending 跨日保留；重启、导入或保存设置不能清零记录。未知结果不当成成功，也不能直接重试。
 - `automation-policy.mjs` 计算消费、保留量、次数限制与总预算。钻石总开关默认 false、总日预算默认 2000、保留阈值默认 0；日预算 0 禁止自动钻石。模块预算和总预算同时检查，加速器共用保留量。
-- 汽油不设用户保留量、每日/本次预算或单次维修费用上限；旧配置字段兼容清理。所有派遣和维修仍核对实际库存、合法报价与待确认占用，并保留消耗统计和防重账本。
 - 原主分支的 `order-reservations.mjs`、`gold-reservations.mjs`、`fleet-reservations.mjs` 继续协调材料、金币和舰队/汽油。已确认扣款可能早于库存同步，因此进程内记录按账号跨重连保留，进程重启后清空；与持久账本共同防止旧余额被重复使用。
 - 普通材料/金币消费通过 `operation` 保存明确回执或使用新连接的业务状态核对函数，先取业务证据再读完整库存结算；通用 guard 的核对见 `spend-evidence.mjs`。不得用净余额下降作为已确认操作的唯一恢复条件，也不能把旧队列自然成熟当成未知新请求成功。新增材料消费者应传实际材料范围，避免阻塞无关材料；缺少完整读取或业务证据继续保留记录。
 - `guard.before` 返回每次操作独立的票据，即使没有日计数也必须原样传给 `after/cancel`，不能按相同请求参数代替票据。即时核对与重连核对共用同一发送前基线；`notSent` 只可归属于原写请求，写入后的回读或回调报错不能取消已发送消费。
@@ -112,7 +111,7 @@ npm run sync-art              # 同步素材；缓存缺图可加 -- --fetch
 
 - `fleet-availability.mjs` 统一派遣顺序和两代占用桥接：默认城战、首杀、世界 Boss、巨轮跟随、普通巨轮、联盟情报。意向预留不抢占真实在途舰队；首杀、城战窗口等预留只阻止低优先级任务。
 - `fleet-settlement.mjs` 依据服务端状态核对占用。解除占用时保留防重证据与已确认费用，空闲不代表未知任务已成功。
-- `fleet-maintenance.mjs` 复用启用城战/巨轮的 `autoRepair` 和舰队名单，空闲后普通补满，不要求下一个目标或仍处于城战时段。同舰队取优先来源的维修参数，按实际汽油库存扣除待确认消费后核对费用。
+- `fleet-maintenance.mjs` 复用启用城战/巨轮的 `autoRepair` 和舰队名单，空闲后普通补满，不要求下一个目标或仍处于城战时段。同舰队取优先来源的维修参数，遵守该来源保留量与预算。
 - `world-boss.mjs` 只在服务器当天参与次数为 0 时派一支空闲舰队；城战接续、万吨巨轮、首杀各自检查目标、耐久、汽油和持久防重记录。城战原生委任额度来自服务器 VIP 规则，不能写死次数；`cityWar.nativeCommissionLimit` 默认 -1 按 VIP 等待，0 关闭所选舰队的原生委任后接管，N 表示先用 N 次再关闭，关闭结果需回读 `MyFleetsResponse` 确认。
 - `equipment-forge.mjs` 管详细锻造，`equipment-crafting.mjs` 保留原手动制造；达到下单上限不应阻止完工领取。海兽放生与装备分解不能读取客户端本地锁定，页面帮助必须说明限制。`antique-upgrade.mjs` 管藏品激活、升星、大师等级和套装升级；激活只消耗对应碎片，升星可用万能碎片，套装与大师消耗金币/经验；结果未知时按持久键阻止重复发送。
 - `seasonal-activities.mjs` 与奖励模块处理新活动；消费动作与免费奖励分别门控。`side-rewards.mjs` 处理漫剧、擂台赛每日礼包和赛季宝箱；擂台赛状态只有推送，由 `server.mjs` 记在连接上。`gift-codes.mjs` 按账号保存记录，多账号各自排队、发送跨账号串行；未知或连接失败只停该账号，限频停止同批未发送账号，未知码不重发。

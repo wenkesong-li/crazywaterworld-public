@@ -30,7 +30,6 @@
 - 船长申请是 `GuildShipSeekRequest { shipId }`，不存在 `GuildShipRunRequest` 或自行编造的“出航”请求。
 - 船位变更由 `SCGuildShipLeader`、`SCGuildShipOrder` 推送；实际开航由 `SCGuildShipMove { shipId, startTime, endTime }` 以及服务端完整状态决定。
 - `SCGuildShipActivity { period: { period, startTime, endTime } }` 给出真实活动结束时间；完整商船查询只有期数，不能推断末日。
-- `TipsDescCfg[联盟商船]` 规定活动结束前 10 分钟提前结算，未出发商船停止应聘船长和补货。自动化按与当前商船期次匹配的服务端 `endTime - 600` 截止，普通模式和末日兜底均适用；预览与红船备料同步停止生成候选，发送前再次检查时间和最新推送。已发送申请保留本人船位核对与材料结算，缺少有效本期结束时间时不猜测截止。
 
 客户端 `GuildShipCargoPop._onConfirm/_sendOrderRequest` 明确检查：有船长、尚在准备期、自己不在此船、队列未满、舱位无人、订单材料足够。上船即交材料，因此详细自动化不把“本人已占船舱”的订单再次当作未完成材料需求。
 

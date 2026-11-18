@@ -49,8 +49,6 @@ export const operationLabels = {
   '/api/accounts/douyin-login/save': '保存抖音账号',
   '/api/accounts/pause': '切换账号托管状态',
   '/api/connect': '连接游戏', '/api/disconnect': '断开连接',
-  '/api/capture': '读取采集状态', '/api/capture/start': '开始采集账号', '/api/capture/stop': '停止采集',
-  '/api/capture/recover': '恢复上次采集残留',
   '/api/overview': '刷新总览', '/api/heroes': '查看英雄', '/api/heroes/run': '执行英雄养成',
   '/api/activities': '读取活动', '/api/pirates': '查看海盗首杀',
   '/api/pirates/hunt': '海盗首杀出征', '/api/trials': '查看试炼进度',

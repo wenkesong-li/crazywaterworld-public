@@ -1,3 +1,4 @@
+import { createConsoleAuth } from './console-auth.mjs';
 import { shutdownSignals } from './platform/terminal.mjs';
 import fs from 'node:fs';
 import readline from 'node:readline';
@@ -49,7 +50,7 @@ function accountSelector() {
 function loadCredentials(selector = accountSelector()) {
   const store = loadStore();
   if (!store.accounts.length) {
-    throw new Error('还没有账号。打开本地控制台，在「账号」页选择「从电脑微信添加」或「从电脑抖音添加」，再从对应客户端重新进入游戏。');
+    throw new Error('还没有账号。打开控制台，在「账号」页登录或导入账号。');
   }
   const account = pickAccount(store, selector);
   if (!account) throw new Error('选不出账号，用 --account <id|昵称|序号> 指定一个');
@@ -694,7 +695,7 @@ function maskedPhone(value) {
   return text;
 }
 
-// 账号管理：列、改名、切换、删除、看凭证。抓包走 tools/capture-credentials.mjs
+// 账号管理：列、改名、切换、删除、查看登录信息。
 // 或网页控制台；手机号登录走下面的 accounts login-phone。
 async function accountsCli(args) {
   const sub = args.find((arg) => !arg.startsWith('--')) ?? 'list';
@@ -795,7 +796,7 @@ async function accountsCli(args) {
 
   if (sub === 'list') {
     if (!store.accounts.length) {
-      console.log(`还没有任何账号。抓一份凭证：node tools/capture-credentials.mjs`);
+      console.log(`还没有任何账号。请打开网页控制台登录或导入账号。`);
       if (fs.existsSync(LEGACY_CREDENTIALS_PATH)) console.log(`（${LEGACY_CREDENTIALS_PATH} 也没读出来）`);
       return;
     }
@@ -806,7 +807,7 @@ async function accountsCli(args) {
         ? `lv${seen.level ?? '?'} 战力${seen.power ?? '?'} 区服${seen.worldName ?? seen.worldId ?? '?'}`
         : '（还没连上过）';
       console.log(`${info.active ? '*' : ' '} ${index + 1}. ${info.title}  ${tail}`);
-      console.log(`     openId ${info.id}  凭证抓于 ${info.capturedAt ?? '未知'}`);
+      console.log(`     openId ${info.id}  凭证更新于 ${info.capturedAt ?? '未知'}`);
     }
     return;
   }
@@ -1060,7 +1061,7 @@ async function main() {
   const output = consoleOutput = createConsoleOutput();
   const restoreOutput = () => output.restore();
   process.once('exit', restoreOutput);
-  const console_ = createConsole({ port, onLog: entry => output.log(entry), resourceUpdates: true });
+  const console_ = createConsole({ authorize: createConsoleAuth(), host: process.env.CW_HOST || '127.0.0.1', port, onLog: entry => output.log(entry), resourceUpdates: true });
   const url = await console_.listen();
   output.start(url);
   let shuttingDown = false;
@@ -1077,7 +1078,7 @@ async function main() {
     if (browser) output.write('已打开浏览器：' + browser);
     const store = loadStore();
     if (!store.accounts.length) {
-      output.write(`还没有账号：打开 ${url}，在「账号」页选择「从电脑微信添加」或「从电脑抖音添加」，再从对应客户端重新进入游戏。`);
+      output.write(`还没有账号：打开 ${url}，在「账号」页登录或导入账号。`);
     } else {
       output.write(`账号 ${store.accounts.length} 个，当前: ${describeAccount(pickAccount(store, null)).title}`);
     }

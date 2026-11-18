@@ -34,10 +34,7 @@ function add(id, token) {
   return result;
 }
 async function open() {
-  app = createConsole({ port: 0, protocol: {}, captureController: {
-    inspectCaptureRecovery: () => ({ pending: false }),
-    captureState: () => ({ running: false }),
-  } });
+  app = createConsole({ port: 0, protocol: {} });
   root = await app.listen();
 }
 async function close() {

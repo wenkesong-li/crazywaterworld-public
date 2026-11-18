@@ -5,6 +5,11 @@ import { LOG_CATEGORIES, LOG_GROUPS, LOG_GROUP_TONES } from './log-categories.mj
 import { createLogAccountLabels } from './log-accounts.mjs';
 import { chrome, journal, dialogs, templates, giftCodesPage, overviewPage, manualPage, inventoryPage, heroesPage, lineupsPage, guildPage, activitiesPage, accountPage, stagePanel, settingsPage } from './ui/dist/console.mjs';
 const componentCss = readFileSync(new URL('./ui/dist/theme.css', import.meta.url), 'utf8');
+const consoleOverridesCss = readFileSync(new URL('./custom/console-overrides.css', import.meta.url), 'utf8');
+const releaseNotesCss = readFileSync(new URL('./custom/release-notes.css', import.meta.url), 'utf8');
+const giftLibraryCss = readFileSync(new URL('./custom/gift-code-library.css', import.meta.url), 'utf8');
+const wechatLoginCss = readFileSync(new URL('./custom/wechat-login.css', import.meta.url), 'utf8');
+const releaseNotesScript = readFileSync(new URL('./custom/release-notes-ui.js', import.meta.url), 'utf8');
 const consoleCss = readFileSync(new URL('./console.css', import.meta.url), 'utf8');
 const progressionScript = readFileSync(new URL('./ui/progression.js', import.meta.url), 'utf8');
 const lineupScript = readFileSync(new URL('./lineup-editor.js', import.meta.url), 'utf8');
@@ -24,6 +29,8 @@ import {mapMotionPosition} from './world-map-geometry.mjs';
 const phoneLoginScript = readFileSync(new URL('./phone-login-ui.js', import.meta.url), 'utf8');
 const alipayLoginScript = readFileSync(new URL('./alipay-login-ui.js', import.meta.url), 'utf8');
 const douyinLoginScript = readFileSync(new URL('./douyin-login-ui.js', import.meta.url), 'utf8');
+const wechatLoginScript = readFileSync(new URL('./custom/wechat-login-ui.js', import.meta.url), 'utf8');
+const consoleUsersScript = readFileSync(new URL('./console-users-ui.js', import.meta.url), 'utf8');
 const accountAddScript = readFileSync(new URL('./account-add-ui.js', import.meta.url), 'utf8');
 const accountBackupScript = readFileSync(new URL('./account-backup-ui.js', import.meta.url), 'utf8');
 const accountPickerScript = readFileSync(new URL('./account-picker-ui.js', import.meta.url), 'utf8');
@@ -44,6 +51,7 @@ export const PAGE = `<!doctype html>
 <meta name="format-detection" content="telephone=no">
 <script id="theme-init">${themeScript}</script>
 <style>@layer properties, theme, base, components, page, utilities; @layer page { ${consoleCss} ${settingsCss} ${appointmentsCss} ${lineupCss} ${siliconOverviewCss} ${resourceFieldsCss} } ${componentCss}</style>
+<style>${consoleOverridesCss} ${releaseNotesCss} ${giftLibraryCss} ${wechatLoginCss}</style>
 </head>
 <body>
 ${chrome()}
@@ -114,7 +122,7 @@ function createConsoleVersionGuard() {
   const version = document.querySelector('meta[name="cw-console-version"]')?.content || '';
   const message = '控制台已更新或重启，当前页面已过期。未保存的草稿已保留；请先下载或复制未保存的修改，再刷新页面。';
   const stops = new Set(['/api/loop/stop','/api/disconnect','/api/stages/stop','/api/pirates/advance/stop',
-    '/api/guild/mutual/stop','/api/trials/stop','/api/capture/stop','/api/accounts/alipay-login/cancel','/api/accounts/douyin-login/cancel','/api/accounts/phone-login/cancel']);
+    '/api/guild/mutual/stop','/api/trials/stop','/api/accounts/alipay-login/cancel','/api/accounts/phone-login/cancel','/api/accounts/wechat-login/cancel','/api/accounts/douyin-login/cancel']);
   let stale = false;
   const failure = () => Object.assign(new Error(message), { code: 'CLIENT_VERSION_MISMATCH', fields: { revision: message } });
   const allowed = (path, method = 'POST') => ['GET','HEAD','OPTIONS'].includes(String(method).toUpperCase())
@@ -196,6 +204,7 @@ async function call(path, options) {
     versionGuard.check(res);
     versionGuard.assertWritable(path, method);
     const data = await res.json();
+    if(res.status===401){stateActions.replaceAccounts([],null);document.body.inert=true;location.replace('/login');throw new Error('登录或权限已失效，请重新登录');}
     versionGuard.check(res, data);
     versionGuard.assertWritable(path, method);
     if (!res.ok) {
@@ -1789,7 +1798,7 @@ function renderAccounts() {
     if (!box.querySelector('.account-empty')) {
       clear(box);
       const empty = el('div', 'account-empty');
-      empty.append(el('h3', null, '添加第一个游戏账号'), el('p', 'dim', '点击「添加账号」登录，或通过「导入账号」恢复备份。'));
+      empty.append(el('h3', null, (typeof consoleIdentity!=='undefined'&&consoleIdentity?.role==='user')?'暂无分配的游戏账号':'添加第一个游戏账号'), el('p', 'dim', (typeof consoleIdentity!=='undefined'&&consoleIdentity?.role==='user')?'请联系管理员分配游戏账号。':'点击「添加账号」登录，或通过「导入账号」恢复备份。'));
       box.appendChild(empty);
     }
     return;
@@ -1905,232 +1914,19 @@ $('enter-world').onclick = () => {
   enterWorld(worldId);
 };
 
-// ---- 添加账号：从电脑微信采集登录 -----------------------------------------
-let capturePoll = null;
-let captureView = null;
-let captureOwner = null;
-let captureFlowVersion = 0;
-let captureActionBusy = false;
-let captureConfirmation = false;
-
-function renderCapture(state) {
-  captureView = state;
-  const hint = $('cap-hint');
-  const previousQr = $('cap-box').querySelector('img');
-  const box = clear($('cap-box'));
-  const recovery = state.recovery;
-  const cleanupPending = state.phase === 'error' || recovery?.pending;
-  $('cap-start').disabled = captureActionBusy || state.running || cleanupPending;
-  $('cap-douyin').disabled = captureActionBusy || state.running || cleanupPending;
-  $('cap-stop').disabled = captureActionBusy || (!state.running && state.phase !== 'error');
-  $('cap-stop').hidden = !state.running && state.phase !== 'error';
-  $('cap-recover').hidden = !recovery?.pending;
-  $('cap-recover').disabled = captureActionBusy || state.running || !recovery?.recoverable;
-  const ownResult = captureOwner?.startedAt && captureOwner.startedAt === state.startedAt;
-  const phase = cleanupPending || state.error ? 'error' : state.running ? state.phase : ownResult && state.accountId ? 'saved' : 'entry';
-  const messages = { starting: '正在准备登录采集…', ca: '请完成 Windows 证书安装提示。', listening: '正在准备本机登录通道…', proxy: '正在准备本机登录通道…', waiting: '请在电脑客户端中重新打开游戏。', captured: '已读取账号，正在完成验证和清理…', stopping: '正在恢复本机代理和证书设置…', saved: '账号已添加。可关闭此窗口，在账号卡片中查看角色和运行状态。', entry: '' };
-  hint.textContent = state.error ? cleanupPending ? '采集清理未完成，请点击「停止读取」重试。' : '本次读取失败，请重新开始或查看运行日志。' : messages[phase] || '';
-  hint.className = state.error ? 'bad' : 'warn';
-  if (recovery?.pending) {
-    hint.textContent = recovery.error ? '本机设置尚未恢复，请重试恢复上次采集残留。' : '检测到上次采集残留，请先恢复原代理和本次安装的证书。';
-    hint.className = recovery.error ? 'bad' : 'warn';
-  }
-  const notice = $('account-add-notice');
-  notice.hidden = !state.running && !cleanupPending;
-  notice.textContent = notice.hidden ? '' : state.platform === 'douyin'
-    ? '电脑抖音账号添加尚未完成，请点击「添加账号」，展开「备用登录方式」并选择「电脑抖音采集」继续处理。'
-    : '微信账号添加尚未完成，请点击「添加账号」并选择对应渠道继续处理。';
-
-  if (!state.running && !cleanupPending && phase !== 'saved') {
-    const clientName = accountAddChannel() === 'douyin' ? '抖音' : '微信';
-    const steps = el('ol', 'steps');
-    for (const text of ['先登录电脑版' + clientName + '。', '点击「开始读取」，按提示完成本机登录通道的准备。', '从电脑' + clientName + '重新打开《疯狂水世界》，等待读取角色并自动保存。']) {
-      steps.appendChild(el('li', null, text));
-    }
-    box.appendChild(steps);
-  }
-
-  if (state.running) {
-    const steps = el('ol', 'steps');
-    const lines = [
-      '先登录电脑版' + (state.platform === 'douyin' ? '抖音' : '微信') + '，再从该客户端打开《疯狂水世界》',
-      '如果游戏已经打开，请完全退出后重新进入，让它重新发送登录请求',
-      '捕获后保存凭证，并尝试读取角色验证登录；验证失败会显示在日志中',
-      '完成、失败或等待超时后会自动恢复代理，只移除本次新安装的证书',
-    ];
-    for (const text of lines) steps.appendChild(el('li', null, text));
-    const qr = el('div', 'qr');
-    const side = el('div', null, '');
-    if (state.platform !== 'douyin' && state.qr && state.qr.kind === 'image') {
-      const img=previousQr?.dataset.url===state.qr.url?previousQr:el('img');
-      if(!img.dataset.url){img.dataset.url=state.qr.url;img.src=state.qr.url+'?t='+Date.now();}
-      img.alt = '游戏入口码（非扫码登录授权）';
-      qr.appendChild(img);
-    }
-    if (state.platform !== 'douyin') side.appendChild(el('div', 'dim', state.qr?.note || '请在电脑微信中打开游戏。'));
-    side.appendChild(steps);
-    qr.appendChild(side);
-    box.appendChild(qr);
-
-  }
-  if (typeof accountAddChanged === 'function') {
-    const selectedChannel = accountAddChannel();
-    const channel = ['wechat', 'douyin'].includes(selectedChannel) ? selectedChannel : state.platform === 'douyin' ? 'douyin' : 'wechat';
-    accountAddChanged(channel, phase, { busy: captureActionBusy });
-  }
-}
-
-async function pollCapture() {
-  const version = captureFlowVersion;
-  try {
-    const state = await call('/api/capture');
-    if (version !== captureFlowVersion) return;
-    renderCapture(state);
-    if (state.running && !capturePoll && accountAddChannel() === state.platform) {
-      capturePoll = setInterval(pollCapture, 1500);
-    }
-    if (!state.running && capturePoll) {
-      clearInterval(capturePoll);
-      capturePoll = null;
-      await loadAccounts(false);
-      renderAccounts();
-    }
-  } catch (error) {
-    if (version !== captureFlowVersion) return;
-    $('cap-hint').textContent = '';
-    reportError(error);
-  }
-}
-
-
-$('cap-start').onclick = () => beginCapture('wechat');
-$('cap-douyin').onclick = () => beginCapture('douyin');
-$('cap-recover').onclick = async () => {
-  if (captureActionBusy) return;
-  captureActionBusy = true;
-  if (captureView) renderCapture(captureView);
-  try {
-    renderCapture(await call('/api/capture/recover', { method: 'POST', body: JSON.stringify({ confirm: true }) }));
-  } catch (error) {
-    reportError(error);
-    await pollCapture();
-  } finally {
-    captureActionBusy = false;
-    if (captureView) renderCapture(captureView);
-  }
-};
-async function beginCapture(platform) {
-  if (captureActionBusy || accountAddChannel() !== platform) return;
-  const version = captureFlowVersion;
-  captureActionBusy = true;
-  accountAddChanged(platform, 'starting', { busy: true });
-  let state;
-  try {
-    state = await call('/api/capture');
-    if (version !== captureFlowVersion || accountAddChannel() !== platform) return;
-    renderCapture(state);
-  } catch (error) {
-    $('cap-hint').textContent = '';
-    reportError(error);
-    return;
-  } finally {
-    captureActionBusy = false;
-    if (captureView) renderCapture(captureView);
-    accountAddChanged(platform, 'entry', { busy: false });
-  }
-  if (state.running || state.phase === 'error' || state.recovery?.pending) return;
-  const body = [
-    el('div', null, '抓包只做两处「仅当前用户」的改动，抓到账号后立刻自动还原：'),
-    el('div', null, '1. 若缺少证书，Windows 会打开导入向导，目标已选定为当前用户的“受信任的根证书颁发机构”。点击“完成”；若出现安全警告，核对 CrazyWaterWorld Local Test CA 后选择“是”。'),
-    el('div', null, '2. 临时使用本机代理读取本游戏的登录信息，结束后恢复原代理设置。'),
-    el('div', null, '使用系统代理的其他程序也会临时经过本机代理，工具仅解密本游戏网关，结束后恢复原设置。随时可点「停止读取」。'),
-    el('div', null, '采集就绪后，请只在电脑' + (platform === 'douyin' ? '抖音' : '微信') + '里重新打开《疯狂水世界》。'),
-    el('div', null, '捕获后会尝试连接游戏验证角色，可能让正在运行的游戏掉线一次。'),
-  ];
-  captureConfirmation = true;
-  openConfirm('开始抓包（将修改当前用户的系统设置）', body, async () => {
-    captureConfirmation = false;
-    if (version !== captureFlowVersion || accountAddChannel() !== platform || captureActionBusy) return;
-    captureActionBusy = true;
-    captureOwner = { platform, startedAt: null, previousStartedAt: state.startedAt };
-    accountAddChanged(platform, 'starting', { busy: true });
-    try {
-      const next = await call('/api/capture/start', { method: 'POST', body: JSON.stringify({ confirm: true, platform }) });
-      captureOwner.startedAt = next.startedAt;
-      renderCapture(next);
-      if (capturePoll) clearInterval(capturePoll);
-      if (next.running) capturePoll = setInterval(pollCapture, 1500);
-      else { await loadAccounts(false); renderAccounts(); }
-    } catch (error) {
-      if (/已经在抓包/.test(error.message)) captureOwner = null;
-      await pollCapture();
-      throw error;
-    } finally {
-      captureActionBusy = false;
-      if (captureView) renderCapture(captureView);
-      else accountAddChanged(platform, 'error', { busy: false });
-    }
-  });
-}
-
-async function stopAccountCapture() {
-  if (captureActionBusy) return false;
-  captureActionBusy = true;
-  if (captureView) renderCapture(captureView);
-  try {
-    const state = await call('/api/capture/stop', { method: 'POST', body: JSON.stringify({ confirm: true }) });
-    renderCapture(state);
-    if (state.running || state.phase === 'error' || state.recovery?.pending) throw new Error(state.error || '采集清理未完成，请重试停止。');
-    clearInterval(capturePoll);
-    capturePoll = null;
-    await loadAccounts(false);
-    renderAccounts();
-    return true;
-  } finally {
-    captureActionBusy = false;
-    if (captureView) renderCapture(captureView);
-  }
-}
-$('cap-stop').onclick = stopAccountCapture;
-
-async function resetAccountAddCapture() {
-  if (captureActionBusy) return false;
-  captureActionBusy = true;
-  captureFlowVersion++;
-  clearInterval(capturePoll);
-  capturePoll = null;
-  if (captureConfirmation && $('modal').open) closeModal();
-  captureConfirmation = false;
-  try {
-    if (captureView) renderCapture(captureView);
-    if (captureOwner) {
-      const state = await call('/api/capture');
-      const ownRun = captureOwner.startedAt ? state.startedAt === captureOwner.startedAt
-        : state.platform === captureOwner.platform && state.startedAt !== captureOwner.previousStartedAt;
-      captureActionBusy = false;
-      if (ownRun && (state.running || state.phase === 'error')) await stopAccountCapture();
-    }
-    captureOwner = null;
-    clear($('cap-box'));
-    $('cap-hint').textContent = '';
-    return true;
-  } finally {
-    captureActionBusy = false;
-    if (captureView) renderCapture(captureView);
-  }
-}
-
-// ---- APP 账号登录 ---------------------------------------------------------
 ${phoneLoginScript}
 
 // ---- 支付宝扫码登录 --------------------------------------------------------
 ${alipayLoginScript}
+${wechatLoginScript}
 
 // ---- 抖音扫码登录 ----------------------------------------------------------
 ${douyinLoginScript}
 
 // ---- 添加账号引导 ----------------------------------------------------------
 ${accountAddScript}
+${consoleUsersScript}
+${releaseNotesScript}
 
 // ---- 页头账号选择 ----------------------------------------------------------
 ${accountPickerScript}
@@ -2181,7 +1977,6 @@ function activateConsolePage(button, resource = selectedResource) {
     if (target === 'lineups') void refreshSavedLineups();
     if (button.dataset.tab === 'account') {
       renderAccounts();
-      pollCapture();
     }
     if (button.dataset.tab === 'manual') refreshManualWorld();
     if (button.dataset.tab === 'settings') {
@@ -2204,6 +1999,7 @@ new ResizeObserver(() => {
 
 async function boot() {
   try {
+    await loadConsoleIdentity();
     await loadAccounts(true);
   } catch (error) {
     $('hint').textContent = '';
@@ -2222,7 +2018,7 @@ async function boot() {
     ? savedView.resource : selectedResource;
   activateConsolePage(button, resource);
   if (location.hash === '#journal') openJournal();
-  pollCapture();
+  void initReleaseNotes();
 }
 // Coalesce related mutations before painting every account surface. The store
 // subscription also covers writes made by React or another subscribed view.
@@ -2245,6 +2041,7 @@ consoleStore.subscribe((state, previous) => {
     }
   }
 });
+window.addEventListener('pageshow',event=>{if(event.persisted)location.reload();});
 boot();
 setInterval(refreshOverview, 20000);
 setInterval(() => { if (!document.hidden && accounts.some(account => account.status?.reconnecting)) paintConnection(); }, 1000);

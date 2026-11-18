@@ -69,7 +69,7 @@ await test('GET发现后台重启即显示持久提示和冻结事件，不需�
 await test('旧页只允许读取和专用停止断开，混合启停路由与其他method不能借道', async () => {
   const f = fixture(); f.guard.observe('new-page');
   const stops = ['/api/loop/stop','/api/disconnect','/api/stages/stop','/api/pirates/advance/stop',
-    '/api/guild/mutual/stop','/api/trials/stop','/api/capture/stop','/api/accounts/alipay-login/cancel','/api/accounts/phone-login/cancel'];
+    '/api/guild/mutual/stop','/api/trials/stop','/api/accounts/alipay-login/cancel','/api/accounts/phone-login/cancel'];
   f.env.fetchHook = () => response('new-page');
   for (const path of stops) await f.call(path, { method: 'POST', body: '{"confirm":true}' });
   for (const path of ['/api/accounts/pause', '/api/loop/auto-start']) await assert.rejects(f.call(path, {method:'POST',body:'{"start":true}'}), mismatch);

@@ -70,7 +70,7 @@ test('GET/HEAD/OPTIONS只读请求不受旧版或缺版本限制', () => {
 
 test('专用停止断开路由始终可用，旧页面能停止正在执行的任务', () => {
   for (const route of ['/api/loop/stop', '/api/disconnect', '/api/stages/stop', '/api/pirates/advance/stop',
-    '/api/guild/mutual/stop', '/api/trials/stop', '/api/capture/stop', '/api/accounts/alipay-login/cancel', '/api/accounts/phone-login/cancel']) {
+    '/api/guild/mutual/stop', '/api/trials/stop',  '/api/accounts/alipay-login/cancel', '/api/accounts/phone-login/cancel']) {
     for (const headers of [{ origin: 'http://localhost' }, { 'x-cw-console-version': stale }]) {
       assert.equal(consoleVersionError(request(headers, 'POST', route + '?account=test'), current), null);
     }

@@ -203,7 +203,6 @@ const app = createConsole({
   port: 0,
   protocol: { OnWaterRequest: true, OnWaterResponse: true, AllItemRequest: true, AllItemResponse: true },
   douyinLoginController: controller,
-  captureController: { inspectCaptureRecovery: () => ({ pending: false }) },
 });
 let closed = false;
 try {

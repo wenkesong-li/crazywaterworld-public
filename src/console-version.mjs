@@ -7,8 +7,9 @@ const readMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
 // such as accounts/pause and loop/auto-start can also start work and must be checked.
 const stopRoutes = new Set([
   '/api/loop/stop', '/api/disconnect', '/api/stages/stop', '/api/pirates/advance/stop',
-  '/api/guild/mutual/stop', '/api/trials/stop', '/api/capture/stop',
+  '/api/guild/mutual/stop', '/api/trials/stop',
   '/api/accounts/alipay-login/cancel', '/api/accounts/phone-login/cancel',
+  '/api/accounts/wechat-login/cancel',
 ]);
 
 function checkVersion(version) {
