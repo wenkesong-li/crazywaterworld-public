@@ -11,7 +11,7 @@
 .release-notes-message { margin:0; padding:0 24px; color:var(--destructive); font-size:13px }
 .release-notes-message:empty { display:none }
 .release-notes-footer { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:10px; padding:16px 24px; border-top:1px solid var(--border) }
-.release-notes-footer button,#release-notes-open { min-height:40px; border:1px solid var(--border); border-radius:9px; padding:8px 14px; background:var(--card); color:var(--foreground); cursor:pointer }
+.release-notes-footer button { min-height:40px; border:1px solid var(--border); border-radius:9px; padding:8px 14px; background:var(--card); color:var(--foreground); cursor:pointer }
 .release-notes-footer button:last-child { background:var(--primary); color:var(--primary-foreground); border-color:var(--primary) }
 .release-notes-footer button:disabled { opacity:.6; cursor:wait }
 @media(max-width:480px) { #release-notes-title { padding:18px 18px 14px } .release-notes-content { padding:0 18px } .release-notes-footer { padding:14px 18px } }

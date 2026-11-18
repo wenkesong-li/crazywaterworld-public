@@ -20,13 +20,10 @@ async function initReleaseNotes() {
   footer.append(historyButton, closeButton);
   dialog.append(heading, content, message, footer);
   document.body.append(dialog);
-  const entry = document.createElement('button');
-  entry.id = 'release-notes-open';
-  entry.type = 'button';
-  entry.textContent = '更新记录';
-  entry.setAttribute('aria-haspopup', 'dialog');
+  // 入口按钮固定在页头右上角，由页面模板提供；这里只补齐弹窗关联并绑定行为。
+  const entry = document.getElementById('release-notes-open');
+  if (!entry) return;
   entry.setAttribute('aria-controls', dialog.id);
-  document.querySelector('.account-page-actions').prepend(entry);
   let data = null;
   let saving = false;
   const render = latestOnly => {
