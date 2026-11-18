@@ -64,9 +64,10 @@ function paintGiftState(){
 }
 function paintGiftInitial(){
   const button=$('gift-load-initial'),note=$('gift-code-initial-note');
-  // 载入公共码库不依赖游戏账号：未添加账号时也可点击抓取并查看；新增行仍需选择账号。
+  // 载入公共码库不依赖游戏账号：未添加账号时也可点击抓取并查看；新增行/批量新增仍需选择账号。
   button.disabled=giftLoading;
   $('gift-add-row').disabled=!giftSelected.size;
+  $('gift-batch-add').disabled=!giftSelected.size;
   button.textContent=giftLoading?'正在检查并载入…':'载入未兑换公共码';
   if(!giftInitial){note.textContent='点击载入可立即检查当天缓存并抓取';return;}
   note.textContent=(giftInitial.dailyTime||'每日更新')+'；公共码 '+giftInitial.total+' 条，所选账号未兑换码 '+giftInitial.available+' 条，已下架过期码 '+giftInitial.expired+' 条；'
@@ -108,6 +109,40 @@ $('gift-add-row').onclick=()=>{
     finally{save.disabled=cancel.disabled=code.disabled=date.disabled=false;}
   };
   const controls=el('div','gift-manual-actions');controls.append(save,cancel);actions.append(controls);row.append(inputCell,el('td','','待保存'),el('td','','未兑换'),dateCell,actions);[...row.children].forEach((cell,index)=>cell.setAttribute('data-label',['礼包码','可用状态','使用状态','到期日期','操作'][index]));$('gift-code-manual-rows').append(row);code.focus();
+};
+// 批量新增：弹窗粘贴多行礼包码，每行一条，统一保存到已勾选账号。
+const batchDialog=document.createElement('dialog');batchDialog.id='gift-batch-dialog';batchDialog.setAttribute('aria-labelledby','gift-batch-title');
+const batchHeading=document.createElement('h2');batchHeading.id='gift-batch-title';batchHeading.textContent='批量新增礼包码';
+const batchInput=document.createElement('textarea');batchInput.rows=8;batchInput.maxLength=12000;batchInput.placeholder='每行一个礼包码，换行分隔，可整段粘贴';
+batchInput.setAttribute('aria-label','批量礼包码，每行一个');
+const batchExpiry=document.createElement('input');batchExpiry.type='date';batchExpiry.setAttribute('aria-label','批量礼包码共用到期日期');
+const batchHint=document.createElement('p');batchHint.className='dim';
+const batchMessage=document.createElement('p');batchMessage.setAttribute('role','status');
+const batchFooter=document.createElement('div');batchFooter.className='update-footer';
+const batchCancel=document.createElement('button');batchCancel.type='button';batchCancel.textContent='取消';
+const batchSave=document.createElement('button');batchSave.type='button';batchSave.textContent='保存';
+batchFooter.append(batchSave,batchCancel);
+batchDialog.append(batchHeading,batchInput,batchExpiry,batchHint,batchMessage,batchFooter);
+document.body.append(batchDialog);
+batchCancel.onclick=()=>batchDialog.close();
+batchDialog.oncancel=event=>{event.preventDefault();batchDialog.close();};
+$('gift-batch-add').onclick=()=>{
+  if(!giftSelected.size){giftNote='请先勾选保存到的游戏账号';paintGiftState();return;}
+  batchInput.value='';batchExpiry.value='';batchMessage.textContent='';
+  batchHint.textContent='将保存到已勾选的 '+giftSelected.size+' 个游戏账号；已有兑换历史的账号自动过滤，到期日期留空表示未注明。';
+  batchDialog.showModal();batchInput.focus();
+};
+batchSave.onclick=async()=>{
+  const codes=[...new Set(batchInput.value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean))];
+  if(!codes.length){batchMessage.textContent='请至少输入一条礼包码';return;}
+  batchSave.disabled=batchCancel.disabled=batchInput.disabled=batchExpiry.disabled=true;
+  try{
+    const result=await call('/api/gift-codes/manual',{method:'POST',body:JSON.stringify({confirm:true,accounts:[...giftSelected],codes,expiresAt:batchExpiry.value||null})});
+    batchDialog.close();
+    giftNote='批量保存 '+result.codes+' 条礼包码：写入 '+result.saved+' 个账号'+(result.ignored?'，过滤已有记录 '+result.ignored+' 项':'');
+    paintGiftState();await refreshGiftCodes();void refreshGiftInitial();
+  }catch(error){batchMessage.textContent=error.message;}
+  finally{batchSave.disabled=batchCancel.disabled=batchInput.disabled=batchExpiry.disabled=false;}
 };
 function paintGiftAccounts(){
   const box=$('gift-account-list'),key=giftAccounts.map(a=>a.id+'\n'+a.title).join('\n');
