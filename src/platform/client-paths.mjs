@@ -7,6 +7,10 @@ function directories(root) {
     return fs.readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name);
   } catch (error) {
     if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return [];
+    // macOS 隐私权限拦截读取微信容器等目录时，直接给出可操作的处理方式。
+    if (error.code === 'EPERM' || error.code === 'EACCES') {
+      throw new Error(`无权读取 ${root}：macOS 请在「系统设置 → 隐私与安全性 → 完全磁盘访问权限」中为终端授权并重启终端；也可用 CW_PROTO_BUNDLE 指向 _src_chunks_.wxapkg 跳过微信缓存`, { cause: error });
+    }
     throw error;
   }
 }
