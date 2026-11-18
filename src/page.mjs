@@ -1997,7 +1997,6 @@ new ResizeObserver(() => {
 
 async function boot() {
   try {
-    await loadConsoleIdentity();
     await loadAccounts(true);
   } catch (error) {
     $('hint').textContent = '';
