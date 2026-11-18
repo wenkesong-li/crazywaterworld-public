@@ -8,7 +8,7 @@
 
 ## 快速开始
 
-支持 Windows 与 macOS（Apple Silicon 和 Intel）。建议使用 Node.js 22.12 或更高版本，同时兼容 Node.js 20.19+（20.x）；也可使用[绿色版](#常用命令)免装 Node 直接启动。**微信和抖音登录都是直接生成二维码扫码授权，无需安装电脑微信或电脑抖音客户端。** 运行前只需一次性准备两个文件（从任何装了客户端的机器拷贝过来即可）：① **游戏协议包** `_src_chunks_.wxapkg`，放到本机后用 `CW_PROTO_BUNDLE` 指向（本机装有电脑微信并打开过游戏时也会自动读取，mac 需为终端或绿色版授予**完全磁盘访问**权限）；② **抖音版游戏资源目录**，用 `CW_DOUYIN_GAME_DIR` 指向。配置表和世界地图默认从游戏 CDN 自动更新。支付宝扫码首次使用时会自动下载与 Playwright 版本匹配的 Chromium（需可访问下载源并预留磁盘空间）；已有浏览器可继续复用，也可通过 `CW_BROWSER_EXECUTABLE` 指定。
+支持 Windows 与 macOS（Apple Silicon 和 Intel）。建议使用 Node.js 22.12 或更高版本，同时兼容 Node.js 20.19+（20.x）；也可使用[绿色版](#常用命令)免装 Node 直接启动。**微信和抖音登录都是直接生成二维码扫码授权，无需安装电脑微信或电脑抖音客户端。** 运行前只需一次性准备两个文件（从任何装了客户端的机器拷贝过来即可）：① **游戏协议包** `_src_chunks_.wxapkg`，拷到程序根目录或 `protocol/` 子目录即自动生效（也可用 `CW_PROTO_BUNDLE` 显式指定；本机装有电脑微信并打开过游戏时同样自动读取，mac 需为终端或绿色版授予**完全磁盘访问**权限）；② **抖音版游戏资源目录**，用 `CW_DOUYIN_GAME_DIR` 指向。配置表和世界地图默认从游戏 CDN 自动更新。支付宝扫码首次使用时会自动下载与 Playwright 版本匹配的 Chromium（需可访问下载源并预留磁盘空间）；已有浏览器可继续复用，也可通过 `CW_BROWSER_EXECUTABLE` 指定。
 
 克隆仓库后，**双击即可启动，无需安装 Node.js**：Windows 双击 `start.cmd`，macOS 双击 `start.command`。首次运行会自动下载 Node 运行时（带进度条）并安装依赖，之后直接启动。后续升级用控制台右上角的 **检查更新**：与上游 GitHub 仓库（[xutongxue233/crazywaterworld](https://github.com/xutongxue233/crazywaterworld)）一致时提示已是最新，有新版本时展示更新内容，确认后带进度条拉取代码并自动安装依赖和构建界面；完成后关闭窗口重新双击 `start.cmd` / `start.command` 启动即可，`data/` 中的账号与配置不受影响（需 git 克隆方式安装）。也可手动执行：
 
