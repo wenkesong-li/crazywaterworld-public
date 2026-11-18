@@ -40,7 +40,8 @@ function runNpm(root, args, executable, { onOutput } = {}) {
 
 export function createUpdateService({
   root = process.env.CW_UPDATE_ROOT || path.resolve(import.meta.dirname, '../..'),
-  remote = process.env.CW_UPDATE_REMOTE || 'origin',
+  // 默认跟踪上游父库；克隆地址与文档也一致指向父库。可用 CW_UPDATE_REMOTE 覆盖。
+  remote = process.env.CW_UPDATE_REMOTE || 'https://github.com/xutongxue233/crazywaterworld.git',
   branch = process.env.CW_UPDATE_BRANCH || 'main',
   npmExecutable,
   gitExecutable = 'git',
@@ -129,8 +130,11 @@ export function createUpdateService({
       setStage('done', 100, '更新完成。');
       job.done = true;
     } catch (error) {
-      job.error = error.message;
-      setStage('error', job.percent, error.message);
+      // 本地相对上游有独立提交时无法快进，给出明确出路而不是 git 原文。
+      job.error = /fast-forward|divergent|fetch first|unrelated histories/i.test(error.message)
+        ? '本地代码与上游已分叉，无法直接快进更新。请手动合并上游改动，或重新克隆最新版本。'
+        : error.message;
+      setStage('error', job.percent, job.error);
     } finally {
       job.finished = true;
     }

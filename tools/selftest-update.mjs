@@ -29,7 +29,7 @@ try {
   git(['remote', 'add', 'origin', remote], work);
   git(['push', '-u', 'origin', 'main'], work);
 
-  const service = createUpdateService({ root: work });
+  const service = createUpdateService({ root: work, remote });
 
   // 3.1 代码一致：提示已是最新版本。
   const same = await service.check();
