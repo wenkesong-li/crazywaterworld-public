@@ -64,7 +64,8 @@ function paintGiftState(){
 }
 function paintGiftInitial(){
   const button=$('gift-load-initial'),note=$('gift-code-initial-note');
-  button.disabled=giftLoading||!giftSelected.size;
+  // 载入公共码库不依赖游戏账号：未添加账号时也可点击抓取并查看；新增行仍需选择账号。
+  button.disabled=giftLoading;
   $('gift-add-row').disabled=!giftSelected.size;
   button.textContent=giftLoading?'正在检查并载入…':'载入未兑换公共码';
   if(!giftInitial){note.textContent='点击载入可立即检查当天缓存并抓取';return;}
