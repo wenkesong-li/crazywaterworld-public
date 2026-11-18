@@ -7,11 +7,20 @@ function directories(root) {
     return fs.readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name);
   } catch (error) {
     if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return [];
-    // macOS 隐私权限拦截读取微信容器等目录时，直接给出可执行的解决命令。
+    // macOS 隐私权限拦截读取微信容器等目录时，给出带换行和命令高亮的解决步骤；
+    // 终端直接输出可看到高亮，运行日志管道会剥掉控制字符后按多行展示。
     if (error.code === 'EPERM' || error.code === 'EACCES') {
-      throw new Error(`无权读取 ${root}（macOS 隐私权限）。两种解决方式：`
-        + ' 方式一·授权后自动读取：运行 open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles" 打开「完全磁盘访问权限」，把当前终端加进去，完全退出（Cmd+Q）重开终端再启动；'
-        + ' 方式二·跳过微信缓存：CW_PROTO_BUNDLE=<协议包路径>/_src_chunks_.wxapkg ./点此启动.command', { cause: error });
+      const cmd = text => `\u001b[1;36m${text}\u001b[0m`;
+      throw new Error([
+        `无权读取 ${root}（macOS 隐私权限拦截）。两种解决方式任选其一：`,
+        '',
+        '方式一 · 授权后自动读取：',
+        `  ${cmd('open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"')}`,
+        '  在打开的「完全磁盘访问权限」面板中添加当前终端，完全退出（Cmd+Q）并重开终端后再次启动。',
+        '',
+        '方式二 · 跳过微信缓存，直接指定协议包：',
+        `  ${cmd('CW_PROTO_BUNDLE=<协议包路径>/_src_chunks_.wxapkg ./点此启动.command')}`,
+      ].join('\n'), { cause: error });
     }
     throw error;
   }
