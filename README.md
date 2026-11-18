@@ -105,6 +105,7 @@ npm start
 | 命令 | 用途 |
 | --- | --- |
 | `npm start` | 构建界面并启动控制台，默认端口 `17321` |
+| `./packaging/build-windows.ps1` | 在 Windows 本地构建绿色版 ZIP（内置 Node 运行时；GitHub Actions 手动触发同一脚本） |
 | `.\start-console.cmd` | 使用 Node 启动入口，端口 `17323`，输出地址与实时日志 |
 | `node tools/start-console.mjs` | 直接使用上述启动入口 |
 | `npm run build:ui` | 重新构建控制台页面与样式 |
