@@ -8,7 +8,7 @@
 
 ## 快速开始
 
-支持 Windows 与 macOS（Apple Silicon 和 Intel）。建议使用 Node.js 22.12 或更高版本，同时兼容 Node.js 20.19+（20.x）；也可使用[绿色版](#常用命令)免装 Node 直接启动。请先在电脑版微信（Windows 或 mac 客户端）中打开一次《疯狂水世界》，供工具读取本机游戏协议包；mac 读取微信缓存需要为终端或绿色版授予**完全磁盘访问**权限，无法读取时可用 `CW_PROTO_BUNDLE` 指定 `_src_chunks_.wxapkg` 或解包后的 `game.js`。配置表和世界地图默认从游戏 CDN 自动更新。添加抖音账号需要电脑版抖音中的游戏资源，mac 需通过 `CW_DOUYIN_GAME_DIR` 指定资源目录。支付宝扫码首次使用时会自动下载与 Playwright 版本匹配的 Chromium（需可访问下载源并预留磁盘空间）；已有浏览器可继续复用，也可通过 `CW_BROWSER_EXECUTABLE` 指定。
+支持 Windows 与 macOS（Apple Silicon 和 Intel）。建议使用 Node.js 22.12 或更高版本，同时兼容 Node.js 20.19+（20.x）；也可使用[绿色版](#常用命令)免装 Node 直接启动。微信和抖音登录均为扫码授权，无需在本机抓取凭证；但运行和读取角色需要一份**游戏协议包**（一次性准备）：最省事的做法是在装了电脑版微信的机器上打开一次《疯狂水世界》，把微信缓存里的 `_src_chunks_.wxapkg` 拷贝到本机并用 `CW_PROTO_BUNDLE` 指向它；也可以在本机电脑微信打开游戏后由工具自动读取（mac 需为终端或绿色版授予**完全磁盘访问**权限）。添加抖音账号同样需要一次性的**抖音版游戏资源目录**：从装了电脑抖音的机器拷贝后用 `CW_DOUYIN_GAME_DIR` 指定，或直接在本机电脑抖音中打开一次游戏。配置表和世界地图默认从游戏 CDN 自动更新。支付宝扫码首次使用时会自动下载与 Playwright 版本匹配的 Chromium（需可访问下载源并预留磁盘空间）；已有浏览器可继续复用，也可通过 `CW_BROWSER_EXECUTABLE` 指定。
 
 ```powershell
 git clone https://github.com/xutongxue233/crazywaterworld.git
