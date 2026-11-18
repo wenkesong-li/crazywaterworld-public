@@ -12,7 +12,6 @@
 npm start                     # prestart 先构建界面，再启动；端口 17321
 .\start-console.cmd           # 用户入口，端口 17323，不自动开浏览器，输出地址和实时业务日志
 .\start-console.cmd url       # 只输出地址并保持窗口，不启动控制台
-.\start-console.cmd status    # 只检查 MITM 证书状态，不启动控制台
 npm run build:ui              # 改 TSX 或 theme.css 后运行，提交 src/ui/dist 产物
 npm test                      # pretest 先构建，再执行规范、类型与全部分组，遇错即停
 npm run test:offline           # 构建、类型检查及无需本机协议的核心回归
@@ -23,8 +22,6 @@ npm run test:core             # 核心协议、日常、原有玩法、阵容与
 npm run test:progression      # 装备、情报、订单、博物馆、海兽、预留与迁移接线
 npm run test:extra            # 详细配置、活动、调度、维修、城战/锻造、礼包与地图
 npm run test:core-subset      # core 子集
-npm run test:capture          # 采集三组不在 npm test 内
-npm run test:wechat
 npm run test:wxapkg
 node tools/selftest-radar.mjs # 单独运行对应测试文件
 npm run sync-config           # 同步配置表到 work/
@@ -69,7 +66,7 @@ npm run sync-art              # 同步素材；缓存缺图可加 -- --fetch
 - 挂机使用外层运行 controller 和每连接独立 attemptController。普通网络、心跳连续超时和重传失败会中断旧轮次，待其退出后退避重连（3 秒起、最高 60 秒），保留进度、账本与预留。异地登录按账号的 `login.autoReconnect` 授权恢复，登录设置提供常规/深夜间隔、随机抖动及重试上限。未运行挂机的账号也按策略恢复连接并保持挂机停止状态。等待时间与已尝试次数持久保存以便重启接续，等待中保存配置立即重算下一次重试时间，页面读取遵守账号的重连等待。手动暂停、停止、断开或关闭自动重连取消重试，拒绝登录、协议错误及次数耗尽终止重试，手动暂停需明确恢复托管。重连后先自动同步工厂、农田和库存再接续原有任务，同步失败保留旧记录并暂缓写入。`GameClient.closeReason` 和登录错误 `recoverable` 决定分类。Webhook 仍未恢复。
 - CLI 的 `console-output.mjs` 在支持 VT 的 TTY 使用滚动区固定地址/提示，日志分批且有界，非 TTY 保留纯文本；关闭恢复滚动区。不要绕过此输出器打印普通控制台日志或全局替换 console；`CW_PIN_HEADER=0` 可关闭顶部固定。
 - `reward-schedule.mjs` 记录奖励下次检查时间，相关推送提前唤醒。推送只触发串行检查，不能另开并行派遣绕过预算。
-- `accounts.mjs`、`capture.mjs`、`tools/mitm-*.mjs` 管理账号与采集。`src/platform/` 封装 Windows 代理、证书、客户端路径、浏览器和终端能力，`tools/start-console.mjs` 承担启动脚本逻辑。采集阶段与归属持久保存在 `data/capture-session.json`，恢复入口包括账号页按钮和 `start-console.cmd recover`。
+- `accounts.mjs` 管理账号与凭证。`src/platform/` 封装 Windows 客户端路径、浏览器和终端能力，`tools/start-console.mjs` 承担启动脚本逻辑。
 
 ### 控制台页面
 
@@ -126,4 +123,4 @@ npm run sync-art              # 同步素材；缓存缺图可加 -- --fetch
 
 ## 文档
 
-用户行为变化更新 `README.md` 和倒序 `CHANGELOG.md`；协议与配置依据见 `docs/gameplay.md`，登录来源见 `docs/wechat-login.md`。
+用户行为变化更新 `README.md` 和倒序 `CHANGELOG.md`；协议与配置依据见 `docs/gameplay.md`。
