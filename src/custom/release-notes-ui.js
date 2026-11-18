@@ -1,5 +1,4 @@
 async function initReleaseNotes() {
-  if (!consoleIdentity) return;
   const dialog = document.createElement('dialog');
   dialog.id = 'release-notes-dialog';
   dialog.setAttribute('aria-labelledby', 'release-notes-title');

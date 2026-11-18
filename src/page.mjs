@@ -30,7 +30,6 @@ const phoneLoginScript = readFileSync(new URL('./phone-login-ui.js', import.meta
 const alipayLoginScript = readFileSync(new URL('./alipay-login-ui.js', import.meta.url), 'utf8');
 const douyinLoginScript = readFileSync(new URL('./douyin-login-ui.js', import.meta.url), 'utf8');
 const wechatLoginScript = readFileSync(new URL('./custom/wechat-login-ui.js', import.meta.url), 'utf8');
-const consoleUsersScript = readFileSync(new URL('./console-users-ui.js', import.meta.url), 'utf8');
 const accountAddScript = readFileSync(new URL('./account-add-ui.js', import.meta.url), 'utf8');
 const accountBackupScript = readFileSync(new URL('./account-backup-ui.js', import.meta.url), 'utf8');
 const accountPickerScript = readFileSync(new URL('./account-picker-ui.js', import.meta.url), 'utf8');
@@ -204,7 +203,6 @@ async function call(path, options) {
     versionGuard.check(res);
     versionGuard.assertWritable(path, method);
     const data = await res.json();
-    if(res.status===401){stateActions.replaceAccounts([],null);document.body.inert=true;location.replace('/login');throw new Error('登录或权限已失效，请重新登录');}
     versionGuard.check(res, data);
     versionGuard.assertWritable(path, method);
     if (!res.ok) {
@@ -1798,7 +1796,7 @@ function renderAccounts() {
     if (!box.querySelector('.account-empty')) {
       clear(box);
       const empty = el('div', 'account-empty');
-      empty.append(el('h3', null, (typeof consoleIdentity!=='undefined'&&consoleIdentity?.role==='user')?'暂无分配的游戏账号':'添加第一个游戏账号'), el('p', 'dim', (typeof consoleIdentity!=='undefined'&&consoleIdentity?.role==='user')?'请联系管理员分配游戏账号。':'点击「添加账号」登录，或通过「导入账号」恢复备份。'));
+      empty.append(el('h3', null, '添加第一个游戏账号'), el('p', 'dim', '点击「添加账号」登录，或通过「导入账号」恢复备份。'));
       box.appendChild(empty);
     }
     return;
@@ -1925,7 +1923,6 @@ ${douyinLoginScript}
 
 // ---- 添加账号引导 ----------------------------------------------------------
 ${accountAddScript}
-${consoleUsersScript}
 ${releaseNotesScript}
 
 // ---- 页头账号选择 ----------------------------------------------------------

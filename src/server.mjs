@@ -1,4 +1,3 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { paginateGiftRecords, giftRecordsCsv, canRetryGiftRecord, canRetryGiftCode } from './gift-code-records.mjs';
 import { serveClientAsset } from './ui-assets.mjs';
 import { createConsoleVersion, renderVersionedPage, consoleVersionError } from './console-version.mjs';
@@ -18,6 +17,7 @@ import { watchMerchant } from './merchant-monitor.mjs';
 import { giftCodeStatus, giftCodeSummary, startGiftCodeBatch, startGiftCodes } from './gift-codes.mjs';
 import { publicGiftCodes, hasGiftCodeHistory } from './custom/gift-code-library.mjs';
 import { createGiftCodeAutomation } from './custom/gift-code-automation.mjs';
+import { createReleaseNotes } from './custom/release-notes.mjs';
 import {runtimeProgress, museumRuntimeStatus} from './runtime-progress.mjs';
 import {watchTreasureTravel} from './treasure-follow.mjs';
 import { watchGuildShipPushes } from './guild-ships.mjs';
@@ -148,7 +148,7 @@ const STATE_TEXT = {
 };
 
 export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recoveryDelayMs, resourceUpdates = false, resourceUpdater = null, protocol: protocolOverride,
-  alipayLoginController = null, douyinLoginController = null, wechatLoginController = null, authorize = null, giftCodeUpdates = resourceUpdates } = {}) {
+  alipayLoginController = null, douyinLoginController = null, wechatLoginController = null, giftCodeUpdates = resourceUpdates } = {}) {
   const consoleVersion = createConsoleVersion(PAGE);
   const pageRaw = Buffer.from(renderVersionedPage(PAGE, consoleVersion));
   const pageAsset = { raw: pageRaw, gzip: zlib.gzipSync(pageRaw, { level: 9 }),
@@ -172,30 +172,7 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
   const globalLog = [];
   const streams = new Set();
   const sessions = new Map();
-  const requestContext = new AsyncLocalStorage();
-  const forbidden = message => Object.assign(new Error(message), { httpStatus: 403 });
-  function requestUser() {
-    const req=requestContext.getStore();
-    if(!req)return null;
-    if(authorize?.currentUser){const user=authorize.currentUser(req);if(!user)throw forbidden('登录或权限已失效，请重新登录');return user;}
-    return req.consoleUser ?? null;
-  }
-  function visibleStore(store=loadStore()) {
-    const user=requestUser(),req=requestContext.getStore();
-    const accounts=!user||user.role==='admin'?store.accounts:store.accounts.filter(account=>user.accountIds.includes(account.id));
-    const selected=req&&authorize?.selectedAccount?.(req);
-    const activeId=accounts.some(account=>account.id===selected)?selected
-      : user?.role==='user'?accounts[0]?.id??null:accounts.some(account=>account.id===store.activeId)?store.activeId:accounts[0]?.id??null;
-    return {...store,accounts,activeId};
-  }
-  function rememberSelectedAccount(id) {
-    const req=requestContext.getStore();
-    if(req&&authorize?.selectAccount&&authorize.currentUser?.(req))authorize.selectAccount(req,id);
-  }
-  function streamVisible(res,account) {
-    if(!res.consoleRestricted)return true;
-    try{return Boolean(account&&res.canSeeAccount?.(account));}catch{streams.delete(res);res.destroy();return false;}
-  }
+  const releaseNotes = createReleaseNotes(DATA_DIR);
   let closing = false;
   let settingsWatchStarted = false;
   const resources = resourceUpdater || (resourceUpdates ? createResourceUpdater({ onEvent: ({ level, message }) => emit(null, level, message) }) : null);
@@ -513,7 +490,6 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
     rememberSeen(account, { ...choice.role, nickname: choice.role.nickname || '未命名角色', worldId: roleWorldId });
     setActive(store, account.id);
     saveStore(store);
-    rememberSelectedAccount(account.id);
     rememberLogAccounts(store.accounts);
     emit(null, 'info', `${sourceLabel}${created ? '已新增' : '已更新'}账号 ${describeAccount(account).title}，已选择 ${choice.worldName} ${choice.role.nickname || '未命名角色'}`);
     const savedSession = sessionFor(account.id);
@@ -577,7 +553,6 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
     try { if (onLog) Promise.resolve(onLog(entry)).catch(() => {}); } catch { /* Preserve the in-memory log. */ }
     const payload = `id: ${entry.id}\ndata: ${JSON.stringify(entry)}\n\n`;
     for (const res of streams) {
-      if (!streamVisible(res,entry.account)) continue;
       if (!res.allAccounts && entry.account !== null && res.account !== entry.account) continue;
       writeStream(res, payload);
     }
@@ -1144,7 +1119,7 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
         session.player.power = body.power;
       }
       if (session.client === instance && ['SCGuildAidHelp', 'SCGuildAidRemove', 'SCGuildAidNew'].includes(name) && (body?.type ?? 0) === 0) {
-        for (const stream of streams) if (streamVisible(stream,session.id) && (stream.allAccounts || stream.account === session.id)) writeStream(stream, `event: guild-aid-changed\ndata: ${JSON.stringify({ account: session.id })}\n\n`);
+        for (const stream of streams) if (stream.allAccounts || stream.account === session.id) writeStream(stream, `event: guild-aid-changed\ndata: ${JSON.stringify({ account: session.id })}\n\n`);
       }
       if (session.client === instance && session.player) {
         if (name === 'SCJoinGuild') session.player.guildId = body.guildId;
@@ -1661,11 +1636,9 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
 
   // 每个请求都带 ?account=<id>；不给就是当前选中的那个账号。
   function resolve(url) {
-    const store = visibleStore();
+    const store = loadStore();
     rememberLogAccounts(store.accounts);
-    let account;
-    try{account=pickAccount(store,url.searchParams.get('account'));}catch(error){if(requestUser()?.role==='user')throw forbidden('无权访问此游戏账号');throw error;}
-    if(!account&&requestUser()?.role==='user')throw forbidden('尚未分配游戏账号，请联系管理员');
+    const account = pickAccount(store, url.searchParams.get('account'));
     if (!account) throw new Error('还没有任何账号，先在「账号」页添加一个');
     return { store, account, session: sessionFor(account.id) };
   }
@@ -1741,7 +1714,7 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
       return {res:id,name:displayMaterial(config,id),amount,sources:config?.materialSources(id),icon:itemIcon(id)};
     });
     return {
-      account: describeAccount(account, { active: account.id === visibleStore().activeId }),
+      account: describeAccount(account, { active: account.id === loadStore().activeId }),
       status: accountStatus(session),
       player: describeRole(session.player),
       weekCalendar: await readWeekCalendar(instance).then(items=>({items})).catch(error=>({items:[],error:error.message})),
@@ -1901,7 +1874,6 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
     const acceptsGzip = /\bgzip\b/.test(req.headers['accept-encoding'] ?? '');
     const json = (value, code = 200) => {
       if (res.destroyed || res.writableEnded) return;
-      if(authorize?.currentUser&&!authorize.currentUser(req)){res.writeHead(401,{'content-type':'application/json; charset=utf-8'});res.end(JSON.stringify({error:'登录或权限已失效，请重新登录'}));return;}
       const text = JSON.stringify(value);
       const headers = { 'content-type': 'application/json; charset=utf-8' };
       // 轮询和地图响应动辄几十上百 KB，通过隧道用手机访问时差别明显。
@@ -1918,6 +1890,8 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
       if (payload.confirm !== true) throw new Error('这个操作会改动游戏里的状态，需要先确认');
     };
     const longRunning = /^(GET|POST) \/api\/(heroes|dailies|tasks|world|overview|loop)(\/|$)/.test(route);
+    if (route === 'GET /api/updates') { json(releaseNotes.view('local')); return; }
+    if (route === 'POST /api/updates/read') { json(releaseNotes.acknowledge('local', jsonBody().version)); return; }
     let scoped = null;
     let releaseWrite;
     // 所有账号相关的路由都先过这里：拿到账号、对应会话，长请求再挂个忙碌标记。
@@ -1938,29 +1912,6 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
       return found;
     };
     try {
-      const user=requestUser();
-      if(user?.role==='user'&&parsed.pathname.startsWith('/api/')){
-        const adminOnly=/^\/api\/(?:accounts\/(?:import(?:\/|$)|alipay-login(?:\/|$)|wechat-login(?:\/|$)|douyin-login(?:\/|$)|phone-login(?:\/|$)|remove$))/.test(parsed.pathname)
-          || route==='POST /api/resources/check';
-        if(adminOnly)throw forbidden('此操作需要管理员权限');
-        const common=route==='GET /api/accounts'||route==='GET /api/events'||route==='GET /api/resources'||route==='GET /api/gift-codes/initial'||route==='GET /api/gift-codes/accounts'
-          || req.method==='GET'&&(parsed.pathname.startsWith('/api/art/')||parsed.pathname.startsWith('/api/lineups/art/'));
-        if(!common){
-          if(route==='POST /api/accounts/export'){
-            const payload=jsonBody(),known=new Set(visibleStore().accounts.map(a=>a.id));
-            const requested=Array.isArray(payload.ids)?payload.ids:payload.id!==undefined?[payload.id]:[];
-            if(requested.some(id=>!known.has(id)))throw forbidden('无权访问所选游戏账号');
-          }else if(['POST /api/accounts/active','POST /api/accounts/label'].includes(route)){
-            const id=jsonBody().id;if(typeof id!=='string'||!visibleStore().accounts.some(a=>a.id===id))throw forbidden('无权访问此游戏账号');
-          }else if(route==='POST /api/gift-codes/redeem'){
-            const targets=jsonBody().accounts,known=new Set(visibleStore().accounts.map(a=>a.id));
-            if(!Array.isArray(targets)||!targets.length||targets.some(id=>!known.has(id)))throw forbidden('无权访问所选游戏账号');
-          }else{
-            const selected=resolve(parsed);parsed.searchParams.set('account',selected.account.id);
-          }
-        }
-        if(route==='GET /api/events'&&parsed.searchParams.get('account'))resolve(parsed);
-      }
       const versionError = consoleVersionError(req, consoleVersion);
       if (versionError) { json(versionError, versionError.status); return; }
       if (['POST /api/dailies/run', 'POST /api/tasks/run', 'POST /api/world/run', 'POST /api/worlds/enter'].includes(route)) {
@@ -2513,7 +2464,7 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
         session.logClearBefore = cleared.before;
         session.logClearAt = cleared.at;
         for (const stream of streams) {
-          if (streamVisible(stream,session.id) && (stream.allAccounts || stream.account === session.id)) writeStream(stream, `event: logs-cleared\ndata: ${JSON.stringify(cleared)}\n\n`);
+          if (stream.allAccounts || stream.account === session.id) writeStream(stream, `event: logs-cleared\ndata: ${JSON.stringify(cleared)}\n\n`);
         }
         json(cleared);
         return;
@@ -2525,18 +2476,16 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
           connection: 'keep-alive',
         });
         res.account = parsed.searchParams.get('account');
-        res.consoleRestricted=requestUser()?.role==='user';
-        res.canSeeAccount=id=>!res.consoleRestricted||Boolean(authorize?.canAccess(req,id));
         res.allAccounts = parsed.searchParams.get('scope') === 'all';
         streams.add(res);
         res.once('close', () => streams.delete(res));
         const logSession = sessions.get(res.account);
-        const logSessions = (res.allAccounts ? [...sessions.values()] : logSession ? [logSession] : []).filter(item=>streamVisible(res,item.id));
+        const logSessions = res.allAccounts ? [...sessions.values()] : logSession ? [logSession] : [];
         const since = Math.max(Number(req.headers['last-event-id'] ?? 0) || 0, res.allAccounts ? 0 : logSession?.logClearBefore ?? 0);
         for (const item of logSessions) {
           if (item.logClearAt && !writeStream(res, `event: logs-cleared\ndata: ${JSON.stringify({ account: item.id, before: item.logClearBefore, at: item.logClearAt })}\n\n`)) return;
         }
-        const entries = [...(res.consoleRestricted?[]:globalLog), ...logSessions.flatMap(item => item.log)]
+        const entries = [...globalLog, ...logSessions.flatMap(item => item.log)]
           .sort((a, b) => a.id - b.id).slice(-LOG_LIMIT);
         for (const entry of entries) {
           if (entry.id > since && !writeStream(res, `id: ${entry.id}\ndata: ${JSON.stringify(entry)}\n\n`)) return;
@@ -2547,7 +2496,7 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
 
       // ---- 账号 ----
       if (route === 'GET /api/accounts') {
-        const store = visibleStore();
+        const store = loadStore();
         rememberLogAccounts(store.accounts);
         json({
           activeId: store.activeId,
@@ -2560,7 +2509,7 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
       }
       if (route === 'POST /api/accounts/export') {
         const { id, ids, all, includeSettings = false } = jsonBody();
-        const store = visibleStore();
+        const store = loadStore();
         const backup = exportAccountBackup(store, { id, ids, all, includeSettings,
           getSettings: account => settingsView(sessionFor(account.id)).settings });
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store',
@@ -2580,7 +2529,6 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
         }
         needConfirm(payload);
         const result = importAccountBackup(payload.document, payload.token);
-        if(result.activeId)rememberSelectedAccount(result.activeId);
         rememberLogAccounts(loadStore().accounts);
         for (const entry of result.saved) {
           const session = sessions.get(entry.id);
@@ -2596,7 +2544,7 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
         return;
       }
       if (route === 'GET /api/accounts/credential') {
-        const store = visibleStore();
+        const store = loadStore();
         const account = pickAccount(store, parsed.searchParams.get('account'));
         if (!account) throw new Error('没有这个账号');
         json(parsed.searchParams.get('reveal') === '1' ? revealAccount(account) : describeAccount(account, { active: account.id === store.activeId }));
@@ -2606,10 +2554,10 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
         const payload = jsonBody();
         needConfirm(payload);
         const store = loadStore();
-        const account = pickAccount(visibleStore(store), payload.id);
+        const account = pickAccount(store, payload.id);
         if (!account) throw new Error('没有这个账号');
-        if(authorize?.selectAccount)authorize.selectAccount(req,account.id);
-        else{setActive(store, account.id);saveStore(store);}
+        setActive(store, account.id);
+        saveStore(store);
         emit(null, 'info', `当前账号切到 ${describeAccount(account).title}`);
         json({ ok: true, activeId: account.id });
         return;
@@ -2618,7 +2566,7 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
         const payload = jsonBody();
         needConfirm(payload);
         const store = loadStore();
-        const account = pickAccount(visibleStore(store), payload.id);
+        const account = pickAccount(store, payload.id);
         if (!account) throw new Error('没有这个账号');
         account.label = String(payload.label ?? '').trim() || null;
         saveStore(store);
@@ -2630,7 +2578,7 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
         const payload = jsonBody();
         needConfirm(payload);
         const store = loadStore();
-        const account = pickAccount(visibleStore(store), payload.id);
+        const account = pickAccount(store, payload.id);
         if (!account) throw new Error('没有这个账号');
         removeAccount(store, account.id);
         saveStore(store);
@@ -2648,9 +2596,9 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
         return;
       }
 
-      // 微信扫码会话按后台用户隔离，浏览器仅接收二维码及角色摘要。
+      // 微信扫码会话，浏览器仅接收二维码及角色摘要。
       if(parsed.pathname.startsWith('/api/accounts/wechat-login/')){
-        const owner=requestUser()?.id??'local';const action=parsed.pathname.split('/').at(-1);
+        const owner='local';const action=parsed.pathname.split('/').at(-1);
         const payload=req.method==='POST'?jsonBody():{};
         if(req.method==='POST')needConfirm(payload);
         if(action==='start'&&req.method==='POST'){json(await wechatLogin.start(owner));return;}
@@ -2678,7 +2626,7 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
             if(!pending.saving&&!pending.reading&&(initial||action==='roles')){
               pending.reading=readPhoneRoles(pending.entry,{signal:pending.controller.signal}).finally(()=>{pending.reading=null;});
             }
-            json({...state,phase:pending.reading?'reading-roles':state.phase,choices:roleChoices(pending.entry,visibleStore()),roleError:pending.entry.roleError});return;
+            json({...state,phase:pending.reading?'reading-roles':state.phase,choices:roleChoices(pending.entry,loadStore()),roleError:pending.entry.roleError});return;
           }
           json(state);return;
         }
@@ -3018,12 +2966,12 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
 
       // ---- 只读视图 ----
       if(route==='GET /api/gift-codes/initial'||route==='POST /api/gift-codes/load'){
-        const known=new Map(visibleStore().accounts.map(account=>[account.id,account]));
+        const known=new Map(loadStore().accounts.map(account=>[account.id,account]));
         const loading=route==='POST /api/gift-codes/load';
         const payload=loading?jsonBody():null;if(loading)needConfirm(payload);
         const selected=loading?payload.accounts:parsed.searchParams.has('accounts')?JSON.parse(parsed.searchParams.get('accounts'))
           :parsed.searchParams.get('account')?[resolve(parsed).account.id]:[...known.keys()].slice(0,1);
-        if(!Array.isArray(selected)||selected.some(id=>typeof id!=='string'||!known.has(id)))throw forbidden('无权查看所选账号的礼包码');
+        if(!Array.isArray(selected)||selected.some(id=>typeof id!=='string'||!known.has(id)))throw Error('无权查看所选账号的礼包码');
         if(loading){try{await publicGiftCodes.refresh({force:true});}catch(error){if(!publicGiftCodes.view().lastSyncedAt)throw error;}}
         const available=new Set(),display=new Map();
         for(const id of new Set(selected)){
@@ -3042,8 +2990,8 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
         json({...catalog,tryCodes:[...available],displayRows:[...display.values()],available:available.size});if(loading)void giftAutomation.check();return;
       }
       if(route==='POST /api/gift-codes/manual'){
-        const payload=jsonBody();needConfirm(payload);const known=new Set(visibleStore().accounts.map(account=>account.id));
-        if(!Array.isArray(payload.accounts)||!payload.accounts.length||payload.accounts.some(id=>typeof id!=='string'||!known.has(id)))throw forbidden('无权维护所选账号的礼包码');
+        const payload=jsonBody();needConfirm(payload);const known=new Set(loadStore().accounts.map(account=>account.id));
+        if(!Array.isArray(payload.accounts)||!payload.accounts.length||payload.accounts.some(id=>typeof id!=='string'||!known.has(id)))throw Error('无权维护所选账号的礼包码');
         const code=typeof payload.code==='string'?payload.code.trim():payload.code;
         const ids=[...new Set(payload.accounts)].filter(id=>!giftCodeStatus(id).rows.some(row=>row.code===code&&hasGiftCodeHistory(row)));
         publicGiftCodes.addManual(ids,code,payload.expiresAt);if(ids.length)void giftAutomation.check();json({saved:ids.length,ignored:payload.accounts.length-ids.length});return;
@@ -3075,7 +3023,7 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
         job.done.catch(()=>{});json({accepted:true});return;
       }
       if(route==='GET /api/gift-codes/accounts'){
-        json({accounts:visibleStore().accounts.map(account=>{
+        json({accounts:loadStore().accounts.map(account=>{
           const session=sessionFor(account.id);
           const base={id:account.id,title:describeAccount(account).title,paused:session.paused,connected:Boolean(session.client?.connected)};
           try{const {rows}=giftCodeStatus(account.id);publicGiftCodes.reconcile(rows);return {...base,...giftCodeSummary(account.id),autoRedeem:publicGiftCodes.auto(account.id).enabled,available:publicGiftCodes.available(rows,account.id).length};}
@@ -3086,7 +3034,7 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
         if(req.headers.origin && req.headers.origin!=='http://'+req.headers.host)throw Error('仅接受本地控制台的兑换请求');
         const payload=jsonBody();needConfirm(payload);
         if(!Array.isArray(payload.accounts)||!payload.accounts.length||payload.accounts.some(id=>typeof id!=='string'))throw Error('请至少选择一个账号');
-        const known=new Map(visibleStore().accounts.map(account=>[account.id,account]));
+        const known=new Map(loadStore().accounts.map(account=>[account.id,account]));
         const targets=[...new Set(payload.accounts)].map(id=>{
           const account=known.get(id);
           if(!account)return {id,title:id,blocked:'账号不存在'};
@@ -4107,7 +4055,7 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
       json({ error: 'not found' }, 404);
     } catch (error) {
       const entry = emit(scoped, 'error', (operationLabels[parsed.pathname] ?? '控制台操作') + '失败：' + error.message, { diagnostic: route });
-      json({ error: error.message, ...(error.fields ? { fields: error.fields } : {}), log: entry }, error.httpStatus ?? 400);
+      json({ error: error.message, ...(error.fields ? { fields: error.fields } : {}), log: entry }, 400);
     } finally {
       releaseWrite?.();
       if (scoped && scoped.busy === route) scoped.busy = null;
@@ -4440,7 +4388,6 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
     refresh:giftCodeUpdates,report:message=>emit(null,'warn',message)});
   const server = http.createServer((req, res) => {
     req.on('error', () => res.destroy());
-    if (authorize && !authorize(req, res)) return;
     res.on('error', () => { streams.delete(res); res.destroy(); });
     req.setEncoding('utf8');
     let body = '',bodyBytes=0,bodyTooLarge=false;
@@ -4451,7 +4398,7 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
     });
     req.on('end', () => {
       if(bodyTooLarge)return;
-      void requestContext.run(req,()=>handle(req, res, body)).catch(error => {
+      void handle(req, res, body).catch(error => {
         emit(null, 'error', '控制台请求处理失败：' + error.message);
         res.destroy();
       });

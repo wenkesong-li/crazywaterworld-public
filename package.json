@@ -11,7 +11,6 @@
     "test:resource-fields": "node tools/selftest-resource-field-settings.mjs && node tools/selftest-resource-fields.mjs && node tools/selftest-resource-fields-loop.mjs && node tools/selftest-resource-fields-http.mjs",
     "test:resource-fields:browser": "npm run build:ui && node tools/selftest-resource-fields-browser.mjs",
     "test:accounts": "node tools/selftest-new-account-defaults.mjs && node tools/selftest-native-action-migration.mjs && node tools/selftest-account-backup-http.mjs && node tools/selftest-account-backup-ui.mjs",
-    "test:auth": "node tools/selftest-console-auth.mjs",
     "test:logs": "node tools/selftest-log-filters.mjs",
     "test:logs:browser": "npm run build:ui && node tools/selftest-log-filters-browser.mjs",
     "test:accounts:browser": "npm run build:ui && node tools/selftest-account-backup-browser.mjs",

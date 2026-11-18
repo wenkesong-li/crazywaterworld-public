@@ -1,4 +1,3 @@
-import { createConsoleAuth } from './console-auth.mjs';
 import { shutdownSignals } from './platform/terminal.mjs';
 import fs from 'node:fs';
 import readline from 'node:readline';
@@ -1061,7 +1060,7 @@ async function main() {
   const output = consoleOutput = createConsoleOutput();
   const restoreOutput = () => output.restore();
   process.once('exit', restoreOutput);
-  const console_ = createConsole({ authorize: createConsoleAuth(), host: process.env.CW_HOST || '127.0.0.1', port, onLog: entry => output.log(entry), resourceUpdates: true });
+  const console_ = createConsole({ host: process.env.CW_HOST || '127.0.0.1', port, onLog: entry => output.log(entry), resourceUpdates: true });
   const url = await console_.listen();
   output.start(url);
   let shuttingDown = false;

@@ -158,7 +158,7 @@ systemctl stop "$CW_SYNC_SERVICE"
 stopped=1
 tar -czf "$backup/data.tar.gz" --exclude=data/chromium --exclude=data/playwright-browsers -C "$app" data
 backup_ready=1
-sha256sum "$app/deploy/production.env" "$app/protocol/_src_chunks_.wxapkg" "$app/data/console-users.json" > "$backup/preserved.sha256"
+sha256sum "$app/deploy/production.env" "$app/protocol/_src_chunks_.wxapkg" > "$backup/preserved.sha256"
 for name in src tools node_modules package.json package-lock.json release-info.json downloads; do
   if test -e "$app/$name"; then mv "$app/$name" "$backup/program/$name"; fi
   if test "$name" = downloads; then mv "$stage/ready-downloads" "$app/downloads";

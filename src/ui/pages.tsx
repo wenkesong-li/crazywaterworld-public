@@ -1,5 +1,4 @@
 import * as React from "react"
-import { ConsoleUsersDialog } from "./custom/console-users-dialog"
 import { renderToStaticMarkup } from "react-dom/server"
 import { Button } from "./button"
 import { Card, CardAction, CardHeader, CardTitle, CardContent } from "./card"
@@ -186,25 +185,21 @@ export function lineupsPage() {
 export function accountPage() {
   return renderToStaticMarkup(<div className="account-page">
     <div className="account-page-heading">
-      <div className="account-page-title"><h2 className="text-xl font-semibold">账号</h2><span id="account-count" className="dim" aria-live="polite">正在读取</span><span id="console-identity" className="dim" /></div>
+      <div className="account-page-title"><h2 className="text-xl font-semibold">账号</h2><span id="account-count" className="dim" aria-live="polite">正在读取</span></div>
       <div className="account-page-actions">
-        <form method="post" action="/auth/logout"><Button type="submit" variant="outline">退出登录</Button></form>
-        <Button data-console-admin="true" id="console-users-open" type="button" variant="outline">后台用户管理</Button>
-        <Button data-console-admin="true" id="import-accounts" type="button" variant="outline">导入账号</Button>
+        <Button id="import-accounts" type="button" variant="outline">导入账号</Button>
         <input id="import-accounts-file" type="file" accept=".json,application/json" aria-label="选择账号备份文件" hidden />
         <Button id="export-accounts" type="button" variant="outline" aria-haspopup="dialog" aria-controls="account-export-dialog">导出账号</Button>
-        <Button data-console-admin="true" id="account-add" type="button" aria-haspopup="dialog" aria-controls="account-add-dialog"><Plus aria-hidden="true" />添加账号</Button>
+        <Button id="account-add" type="button" aria-haspopup="dialog" aria-controls="account-add-dialog"><Plus aria-hidden="true" />添加账号</Button>
       </div>
     </div>
-    <div data-console-admin="true" className="account-login-shortcuts" role="group" aria-label="快速添加账号">
+    <div className="account-login-shortcuts" role="group" aria-label="快速添加账号">
       <Button id="account-add-wechat-shortcut" type="button" variant="outline"><QrCode aria-hidden="true" />微信扫码登录</Button>
       <Button id="account-add-alipay-shortcut" type="button" variant="outline"><QrCode aria-hidden="true" />支付宝扫码登录</Button>
       <Button id="account-add-phone-shortcut" type="button" variant="outline"><Smartphone aria-hidden="true" />手机号登录</Button>
     </div>
     <p className="dim">可连续添加多个账号，每个账号独立连接和挂机。切换当前查看的账号不会停止其他账号；可在账号卡片中单独暂停或恢复托管。</p>
     <p className="dim">新账号默认不挂机，点击「开始挂机」后才会持续运行；每个账号可通过「登录设置」单独配置自动重连策略。</p>
-    <p id="console-assignment-note" className="dim" hidden>仅显示分配给你的游戏账号。共享同一游戏账号的用户使用相同配置和运行状态，修改配置或暂停会影响共享该账号的用户。</p>
-    <ConsoleUsersDialog />
     <p id="account-add-notice" className="dim" role="status" hidden />
     <p id="account-transfer-notice" className="dim" role="status" aria-live="polite" hidden />
     <div id="accounts" className="account-grid" />
