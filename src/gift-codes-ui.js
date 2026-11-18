@@ -93,7 +93,7 @@ async function refreshGiftInitial(){
 }
 $('gift-load-initial').onclick=async()=>{
   if(giftLoading)return;giftLoading=true;paintGiftInitial();const version=++giftInitialVersion;
-  try{const data=await call('/api/gift-codes/load',{method:'POST',body:JSON.stringify({confirm:true,accounts:[...giftSelected]})});if(version!==giftInitialVersion)return;giftInitial=data;giftNote=data.lastError?'同步失败，已载入可用缓存：'+data.lastError:'已载入全部未兑换码，历史已处理和已过期的码默认不显示。';}
+  try{const data=await call('/api/gift-codes/load',{method:'POST',body:JSON.stringify({confirm:true,accounts:[...giftSelected]})});if(version!==giftInitialVersion)return;giftInitial=data;giftNote=data.lastError?'同步失败，已载入可用缓存：'+data.lastError:'已载入全部未兑换码；已处理/过期按当前勾选账号计算，默认隐藏，其他账号不受影响。';}
   catch(error){giftNote=error.message;}
   finally{giftLoading=false;if(version!==giftInitialVersion)void refreshGiftInitial();paintGiftInitial();paintGiftState();}
 };
