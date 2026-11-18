@@ -90,7 +90,7 @@ async function initUpdate() {
   function showDone(state) {
     const wrap = document.createElement('div');
     wrap.append(paragraph('✅ 更新完成，已升级到 ' + short(state.version) + '。'));
-    wrap.append(paragraph('请关闭当前窗口（直接关闭终端窗口，或按 Ctrl+C / Cmd+Q），然后重新双击「点此启动」启动最新版本。', 'update-hint'));
+    wrap.append(paragraph('请关闭当前窗口（直接关闭终端窗口，或按 Ctrl+C / Cmd+Q），然后重新双击 start.cmd / start.command 启动最新版本。', 'update-hint'));
     wrap.append(paragraph('账号、配置和运行记录保存在 data/ 目录，重新启动后不受影响。', 'update-hint'));
     setBody(wrap);
     confirmButton.hidden = true;

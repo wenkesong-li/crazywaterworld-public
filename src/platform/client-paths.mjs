@@ -19,7 +19,7 @@ function directories(root) {
         '  在打开的「完全磁盘访问权限」面板中添加当前终端，完全退出（Cmd+Q）并重开终端后再次启动。',
         '',
         '方式二 · 跳过微信缓存，直接指定协议包：',
-        `  ${cmd('CW_PROTO_BUNDLE=<协议包路径>/_src_chunks_.wxapkg ./点此启动.command')}`,
+        `  ${cmd('CW_PROTO_BUNDLE=<协议包路径>/_src_chunks_.wxapkg ./start.command')}`,
       ].join('\n'), { cause: error });
     }
     throw error;
