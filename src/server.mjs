@@ -3001,23 +3001,17 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
         json({...catalog,tryCodes:[...available],displayRows:[...display.values()],available:available.size});if(loading)void giftAutomation.check();return;
       }
       if(route==='POST /api/gift-codes/manual'){
-        const payload=jsonBody();needConfirm(payload);const known=new Set(loadStore().accounts.map(account=>account.id));
-        if(!Array.isArray(payload.accounts)||!payload.accounts.length||payload.accounts.some(id=>typeof id!=='string'||!known.has(id)))throw Error('无权维护所选账号的礼包码');
-        // 兼容单条 code 与批量 codes（批量弹窗每行一个）；统一去空去重并校验格式。
+        const payload=jsonBody();needConfirm(payload);
+        // 手动添加的礼包码全账号共享，未登录也可添加；兼容单条 code 与批量 codes（每行一个）。
         const codes=Array.isArray(payload.codes)
           ?[...new Set(payload.codes.map(code=>String(code??'').trim()).filter(Boolean))]
           :[typeof payload.code==='string'?payload.code.trim():''].filter(Boolean);
         if(!codes.length)throw Error('请至少提供一条礼包码');
         if(codes.length>500)throw Error('单次最多保存 500 条礼包码');
         if(codes.some(code=>code.length>128||/[\s,，;；]/u.test(code)))throw Error('礼包码不能包含空格、逗号或分号，且不超过 128 字符');
-        const accounts=[...new Set(payload.accounts)];
-        let saved=0,ignored=0;
-        for(const code of codes){
-          const ids=accounts.filter(id=>!giftCodeStatus(id).rows.some(row=>row.code===code&&hasGiftCodeHistory(row)));
-          publicGiftCodes.addManual(ids,code,payload.expiresAt);saved+=ids.length;ignored+=accounts.length-ids.length;
-        }
-        if(saved)void giftAutomation.check();
-        json({saved,ignored,codes:codes.length});return;
+        for(const code of codes)publicGiftCodes.addManual(code,payload.expiresAt);
+        void giftAutomation.check();
+        json({saved:codes.length,codes:codes.length});return;
       }
       if(route==='POST /api/gift-codes/auto'){
         const payload=jsonBody();needConfirm(payload);const {account}=resolve(parsed);

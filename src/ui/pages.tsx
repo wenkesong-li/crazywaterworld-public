@@ -23,7 +23,7 @@ export function giftCodesPage() {
       <div className="bar"><Button type="button" variant="outline" size="sm" id="gift-load-initial">载入未兑换公共码</Button><Button type="button" variant="outline" size="sm" id="gift-add-row">新增礼包码行</Button><Button type="button" variant="outline" size="sm" id="gift-batch-add" aria-haspopup="dialog" aria-controls="gift-batch-dialog">批量新增</Button><label><input id="gift-show-processed" type="checkbox" /> 显示已处理</label></div>
       <p id="gift-code-initial-note" className="dim" role="status" />
       <div className="gift-library-table"><table><thead><tr><th>礼包码</th><th>可用状态</th><th>使用状态</th><th>到期日期（北京时间）</th><th>来源 / 操作</th></tr></thead><tbody id="gift-code-library-rows" /><tbody id="gift-code-manual-rows" /></table></div>
-      <p className="dim">新增行仅保存到勾选的账号，自动兑换开启后会自动处理。有效期留空表示未注明，需由游戏确认；明确过期会全局下架。</p>
+      <p className="dim">手动添加的礼包码全部账号共享，未登录也可先添加，已兑换的账号会自动跳过。有效期留空表示未注明，需由游戏确认；明确过期会全局下架。</p>
       <fieldset className="gift-accounts"><legend>兑换账号</legend>
         <div className="bar"><Button variant="outline" size="sm" id="gift-select-all">全选</Button><Button variant="outline" size="sm" id="gift-select-none">清空</Button><span id="gift-selected-count" className="dim" /></div>
         <div id="gift-account-list" className="gift-account-list" />

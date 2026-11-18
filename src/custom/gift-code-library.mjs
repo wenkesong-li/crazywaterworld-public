@@ -38,6 +38,7 @@ export function parseGiftCodeArticle(html) {
 
 export function createGiftCodeLibrary({ directory = DATA_DIR, now = Date.now, fetcher = fetch } = {}) {
   const catalogFile = path.join(directory, 'public-gift-codes.json'), preferenceFile = path.join(directory, 'gift-code-preferences.json');
+  const manualFile = path.join(directory, 'shared-gift-codes.json');
   const read = () => {
     const data = readJson(catalogFile, { version: 1, codes: [], expired: [] });
     if (data?.version !== 1 || !Array.isArray(data.codes) || !Array.isArray(data.expired)) throw Error('公共礼包码数据库无效');
@@ -48,6 +49,28 @@ export function createGiftCodeLibrary({ directory = DATA_DIR, now = Date.now, fe
     if (data?.version !== 1 || !Array.isArray(data.accounts)) throw Error('自动兑换设置无效');
     return data;
   };
+  // 手动添加的礼包码全账号共享；旧版本按账号保存的手动码一次性迁移合并到共享库。
+  const sharedCodes = () => withFileLock(manualFile, () => {
+    const data = readJson(manualFile, { version: 1, codes: [] });
+    if (data?.version !== 1 || !Array.isArray(data.codes)) throw Error('共享礼包码数据库无效');
+    const legacy = preferences().accounts.filter(account => Array.isArray(account.manualCodes) && account.manualCodes.length);
+    if (legacy.length) withFileLock(preferenceFile, () => {
+      const prefs = preferences();
+      const merged = new Map(data.codes.map(row => [row.code, row]));
+      for (const account of prefs.accounts) {
+        for (const row of account.manualCodes ?? []) {
+          const known = merged.get(row.code);
+          merged.set(row.code, known
+            ? { ...known, expiresAt: row.expiresAt && (!known.expiresAt || row.expiresAt < known.expiresAt) ? row.expiresAt : known.expiresAt }
+            : { code: row.code, expiresAt: row.expiresAt ?? null, firstSeenAt: row.firstSeenAt ?? new Date(now()).toISOString() });
+        }
+        account.manualCodes = [];
+      }
+      data.codes = [...merged.values()];
+      atomicJson(manualFile, data); atomicJson(preferenceFile, prefs);
+    });
+    return data;
+  });
   const changePreference = (id, work) => withFileLock(preferenceFile, () => {
     const data = preferences();
     let account = data.accounts.find(entry => entry.id === id);
@@ -76,24 +99,21 @@ export function createGiftCodeLibrary({ directory = DATA_DIR, now = Date.now, fe
       const known=new Set(read().expired.map(row=>row.code));
       for (const row of rows) if (!known.has(row.code)&&row.status === 'rejected' && (row.promptName === 'GIFT_CODE_EXPIRED' || row.detail === '礼包码已过期')) {library.expire(row.code);known.add(row.code);}
     },
-    entries(id) {
+    entries() {
       library.pruneExpired();
       const data=read(),expired=new Set(data.expired.map(row=>row.code));
       const codes=new Map(data.codes.map(row=>[row.code,{...row,manual:false}]));
-      if(id){
-        const personal=library.auto(id).manualCodes??[];
-        for(const row of personal){
-          if(expired.has(row.code)||expiredDate(row.expiresAt,now())){codes.delete(row.code);continue;}
-          const shared=codes.get(row.code);
-          codes.set(row.code,shared?{...shared,expiresAt:row.expiresAt&&(!shared.expiresAt||row.expiresAt<shared.expiresAt)?row.expiresAt:shared.expiresAt}:{...row,manual:true});
-        }
+      for(const row of sharedCodes().codes){
+        if(expired.has(row.code)||expiredDate(row.expiresAt,now())){codes.delete(row.code);continue;}
+        const publicRow=codes.get(row.code);
+        codes.set(row.code,publicRow?{...publicRow,expiresAt:row.expiresAt&&(!publicRow.expiresAt||row.expiresAt<publicRow.expiresAt)?row.expiresAt:publicRow.expiresAt,manual:true}:{...row,manual:true});
       }
       return [...codes.values()];
     },
-    available(rows,id) {
+    available(rows) {
       library.pruneExpired();
       const unavailable = new Set(rows.filter(hasGiftCodeHistory).map(row => row.code));
-      return library.entries(id).filter(row => !expiredDate(row.expiresAt, now()) && !unavailable.has(row.code)).map(row => row.code);
+      return library.entries().filter(row => !expiredDate(row.expiresAt, now()) && !unavailable.has(row.code)).map(row => row.code);
     },
     view() {
       library.pruneExpired();
@@ -104,13 +124,13 @@ export function createGiftCodeLibrary({ directory = DATA_DIR, now = Date.now, fe
         revision: createHash('sha256').update(codes.map(row => row.code).join('\n')).digest('hex') };
     },
     auto(id) { return { enabled: false, ...preferences().accounts.find(entry => entry.id === id) }; },
-    accountRevision(id) { return createHash('sha256').update(JSON.stringify(library.entries(id).map(row=>[row.code,row.expiresAt]))).digest('hex'); },
-    addManual(ids,code,expiresAt) {
+    accountRevision() { return createHash('sha256').update(JSON.stringify(library.entries().map(row=>[row.code,row.expiresAt]))).digest('hex'); },
+    addManual(code,expiresAt) {
       if(typeof code!=='string'||!/^[\p{L}\p{N}_-]{1,128}$/u.test(code.trim()))throw Error('礼包码需为1至128个汉字、字母、数字、下划线或短横线');
       code=code.trim();expiresAt=expiresAt||null;
       if(expiresAt&&(typeof expiresAt!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(expiresAt)||new Date(expiresAt+'T00:00:00Z').toISOString().slice(0,10)!==expiresAt||expiredDate(expiresAt,now())))throw Error('到期日期无效或已经过期');
       if(library.isExpired(code))throw Error('该礼包码已全局下架，不能再次添加');
-      withFileLock(preferenceFile,()=>{const data=preferences();for(const id of ids){let account=data.accounts.find(row=>row.id===id);if(!account){account={id,enabled:false};data.accounts.push(account);}const rows=account.manualCodes??[];account.manualCodes=[...rows.filter(row=>row.code!==code),{code,expiresAt,firstSeenAt:rows.find(row=>row.code===code)?.firstSeenAt??new Date(now()).toISOString()}];}atomicJson(preferenceFile,data);});
+      withFileLock(manualFile,()=>{const data=sharedCodes();const rows=data.codes;data.codes=[...rows.filter(row=>row.code!==code),{code,expiresAt,firstSeenAt:rows.find(row=>row.code===code)?.firstSeenAt??new Date(now()).toISOString()}];atomicJson(manualFile,data);});
     },
     setAuto(id, enabled) {
       if (typeof enabled !== 'boolean') throw Error('自动兑换开关必须为布尔值');

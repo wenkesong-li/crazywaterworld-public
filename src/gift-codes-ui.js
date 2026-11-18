@@ -64,10 +64,10 @@ function paintGiftState(){
 }
 function paintGiftInitial(){
   const button=$('gift-load-initial'),note=$('gift-code-initial-note');
-  // 载入公共码库不依赖游戏账号：未添加账号时也可点击抓取并查看；新增行/批量新增仍需选择账号。
+  // 载入公共码库和手动添加礼包码都不依赖游戏账号：手动码全账号共享，未登录也可先添加。
   button.disabled=giftLoading;
-  $('gift-add-row').disabled=!giftSelected.size;
-  $('gift-batch-add').disabled=!giftSelected.size;
+  $('gift-add-row').disabled=false;
+  $('gift-batch-add').disabled=false;
   button.textContent=giftLoading?'正在检查并载入…':'载入未兑换公共码';
   if(!giftInitial){note.textContent='点击载入可立即检查当天缓存并抓取';return;}
   note.textContent=(giftInitial.dailyTime||'每日更新')+'；公共码 '+giftInitial.total+' 条，所选账号未兑换码 '+giftInitial.available+' 条，已下架过期码 '+giftInitial.expired+' 条；'
@@ -80,7 +80,7 @@ function paintGiftInitial(){
     const status=entry.usage.length===1?(giftLabels[entry.usage[0].status]||'未兑换'):entry.usage.length?Object.entries(counts).map(([label,count])=>label+' '+count).join(' / '):'未连接账号';
     const availability=entry.eligible?(entry.usage.some(row=>row.status!=='unused')?'部分账号可用':entry.expiresAt?'未到期':'有效期待确认')
       :entry.usage.some(row=>['queued','sending'].includes(row.status))?'处理中':entry.usage.some(row=>row.status==='unknown')?'待确认，不重发':'已处理，不再兑换';
-    const row=el('tr');[entry.code,availability,status,entry.expiresAt||'来源未注明',entry.manual?'个人添加':'公共码库'].forEach((value,index)=>{const cell=el('td','',value);cell.setAttribute('data-label',['礼包码','可用状态','使用状态','到期日期','来源 / 操作'][index]);row.append(cell);});row.children[2].title=usage;table.append(row);
+    const row=el('tr');[entry.code,availability,status,entry.expiresAt||'来源未注明',entry.manual?'手动添加':'公共码库'].forEach((value,index)=>{const cell=el('td','',value);cell.setAttribute('data-label',['礼包码','可用状态','使用状态','到期日期','来源 / 操作'][index]);row.append(cell);});row.children[2].title=usage;table.append(row);
   }
   if(!table.children.length){const row=el('tr'),cell=el('td','','暂无未兑换码，可点击载入或新增礼包码行');cell.colSpan=5;row.append(cell);table.append(row);}
 }
@@ -103,8 +103,8 @@ $('gift-add-row').onclick=()=>{
   const row=el('tr'),code=el('input'),date=el('input');code.type='text';code.maxLength=128;code.placeholder='输入礼包码';code.setAttribute('aria-label','新增礼包码');date.type='date';date.setAttribute('aria-label','新增礼包码到期日期');
   const inputCell=el('td');inputCell.append(code);const dateCell=el('td');dateCell.append(date);const actions=el('td'),save=el('button','gift-auto-toggle','保存'),cancel=el('button','gift-auto-toggle','取消');save.type=cancel.type='button';
   cancel.onclick=()=>row.remove();
-  save.onclick=async()=>{if(!code.value.trim()){code.focus();return;}if(!giftSelected.size){giftNote='请先勾选保存到的游戏账号';paintGiftState();return;}save.disabled=cancel.disabled=code.disabled=date.disabled=true;
-    try{const result=await call('/api/gift-codes/manual',{method:'POST',body:JSON.stringify({confirm:true,accounts:[...giftSelected],code:code.value.trim(),expiresAt:date.value||null})});row.remove();giftNote=result.saved?'已保存到 '+result.saved+' 个游戏账号'+(result.ignored?'，已有记录的账号已过滤':''):'该码已有兑换历史，没有重复添加';await refreshGiftCodes();}
+  save.onclick=async()=>{if(!code.value.trim()){code.focus();return;}save.disabled=cancel.disabled=code.disabled=date.disabled=true;
+    try{const result=await call('/api/gift-codes/manual',{method:'POST',body:JSON.stringify({confirm:true,code:code.value.trim(),expiresAt:date.value||null})});row.remove();giftNote='已保存，全部账号共享，已兑换的账号会自动跳过';await refreshGiftCodes();}
     catch(error){giftNote=error.message;paintGiftState();}
     finally{save.disabled=cancel.disabled=code.disabled=date.disabled=false;}
   };
@@ -127,9 +127,8 @@ document.body.append(batchDialog);
 batchCancel.onclick=()=>batchDialog.close();
 batchDialog.oncancel=event=>{event.preventDefault();batchDialog.close();};
 $('gift-batch-add').onclick=()=>{
-  if(!giftSelected.size){giftNote='请先勾选保存到的游戏账号';paintGiftState();return;}
   batchInput.value='';batchExpiry.value='';batchMessage.textContent='';
-  batchHint.textContent='将保存到已勾选的 '+giftSelected.size+' 个游戏账号；已有兑换历史的账号自动过滤，到期日期留空表示未注明。';
+  batchHint.textContent='手动添加的礼包码全部账号共享，已兑换的账号会自动跳过；到期日期留空表示未注明。';
   batchDialog.showModal();batchInput.focus();
 };
 batchSave.onclick=async()=>{
@@ -137,9 +136,9 @@ batchSave.onclick=async()=>{
   if(!codes.length){batchMessage.textContent='请至少输入一条礼包码';return;}
   batchSave.disabled=batchCancel.disabled=batchInput.disabled=batchExpiry.disabled=true;
   try{
-    const result=await call('/api/gift-codes/manual',{method:'POST',body:JSON.stringify({confirm:true,accounts:[...giftSelected],codes,expiresAt:batchExpiry.value||null})});
+    const result=await call('/api/gift-codes/manual',{method:'POST',body:JSON.stringify({confirm:true,codes,expiresAt:batchExpiry.value||null})});
     batchDialog.close();
-    giftNote='批量保存 '+result.codes+' 条礼包码：写入 '+result.saved+' 个账号'+(result.ignored?'，过滤已有记录 '+result.ignored+' 项':'');
+    giftNote='批量保存 '+result.codes+' 条礼包码，全部账号共享，已兑换的账号会自动跳过';
     paintGiftState();await refreshGiftCodes();void refreshGiftInitial();
   }catch(error){batchMessage.textContent=error.message;}
   finally{batchSave.disabled=batchCancel.disabled=batchInput.disabled=batchExpiry.disabled=false;}
