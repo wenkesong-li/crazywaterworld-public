@@ -5,9 +5,9 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { DATA_DIR } from './accounts.mjs';
 import { hasReward } from './activity-actions.mjs';
 import { rewardData } from './missing-rewards.mjs';
-import { publicGiftCodes, hasGiftCodeHistory } from './gift-code-library.mjs';
-import { canRetryGiftCode } from './gift-code-records.mjs';
+import { publicGiftCodes, hasGiftCodeHistory } from './custom/gift-code-library.mjs';
 import { atomicJson } from './json-store.mjs';
+import { canRetryGiftCode } from './gift-code-records.mjs';
 
 const messages = {
   GIFT_CODE_EXPIRED:'礼包码已过期', GIFT_CODE_INVALID:'礼包码无效',
@@ -27,12 +27,12 @@ function throughSendGate(work) {
 function parseCodes(input) {
   if(typeof input!=='string'||Buffer.byteLength(input,'utf8')>1024*1024)throw Error('礼包码输入不能超过 1 MB');
   const codes=[...new Set(input.trim().split(/[\s,，;；]+/u).filter(Boolean))];
-  if(!codes.length||codes.some(c=>c.length>128))throw Error('每批至少一个不同的礼包码，每个最多128个字符');
+  if(!codes.length||codes.some(c=>c.length>128))throw Error('每批至少输入一个礼包码，每个最多128个字符');
   return codes;
 }
 const fileFor = id => path.join(DATA_DIR, 'gift-codes-' + encodeURIComponent(id) + '.json');
 function store(id, rows) {
-  atomicJson(fileFor(id), rows);
+  atomicJson(fileFor(id),rows);
 }
 function read(id) {
   let rows;
@@ -59,16 +59,22 @@ export function giftCodeSummary(id) {
 }
 export function startGiftCodes(id,input,dispatch,shared={stop:''},options={}) {
   if(active.has(id))throw Error('该账号已有一批正在兑换');
-  const codes=parseCodes(input);
+  const parsedCodes=parseCodes(input);
   const history=read(id),batch=randomUUID(),time=new Date().toISOString();
   publicGiftCodes.reconcile(history);
-  if(options.retry===true && (codes.length!==1 || !canRetryGiftCode(history,codes[0])))throw Error('该记录不允许重试，请刷新记录');
-  const expiry=new Map(publicGiftCodes.entries().map(row=>[row.code,row.expiresAt]));
-  const rows=codes.map(code=>{
-    const old=options.retry===true?null:history.find(r=>r.code===code&&hasGiftCodeHistory(r));
-    const expired=publicGiftCodes.isExpired(code);
-    return {batch, code, expiresAt:expiry.get(code)??null, automatic:options.automatic===true, at:time,status:old||expired?'skipped':'queued',
-      detail:old?(old.status==='unknown'?'上次结果待确认，未重发':'已有兑换记录，未重发'):expired?'礼包码已过期，尚未发送':'等待兑换'};
+  const previous=new Map(history.filter(hasGiftCodeHistory).map(row=>[row.code,row]));
+  if(options.retry===true && (parsedCodes.length!==1 || !canRetryGiftCode(history,parsedCodes[0])))throw Error('该记录不允许重试，请刷新记录');
+  const codes=parsedCodes.filter(code=>(!previous.has(code)||options.retry===true)&&!publicGiftCodes.isExpired(code));
+  if(!codes.length)throw Error('该账号没有新的礼包码，已有兑换历史和已过期的码均已过滤');
+  const catalog = new Map(publicGiftCodes.entries(id).map(row => [row.code, row]));
+  const channelNames = new Map(publicGiftCodes.channels().map(channel => [channel.id, channel.name]));
+  const rows = codes.map(code => {
+    const entry = catalog.get(code);
+    const channels = entry?.sourceDetails?.map(source => source.name)
+      ?? (entry?.sources ?? (entry && !entry.manual ? ['ali213'] : [])).map(source => channelNames.get(source) ?? source);
+    if (!channels.length && entry?.manual) channels.push(entry.shared ? '共享添加' : '个人添加');
+    return { batch, code, expiresAt: entry?.expiresAt ?? null, channels, automatic: options.automatic === true,
+      at: time, status: 'queued', detail: '等待兑换' };
   });
   const job={rows:[...rows,...history]};store(id,job.rows);active.set(id,job);
   async function run(){
@@ -78,24 +84,29 @@ export function startGiftCodes(id,input,dispatch,shared={stop:''},options={}) {
       if(options.shouldContinue?.()===false)stop='自动兑换已关闭或服务正在停止，尚未发送';
       stop||=shared.stop;
       if(stop){Object.assign(r,{status:'skipped',detail:stop});continue;}
-      if(publicGiftCodes.isExpired(r.code)){Object.assign(r,{status:'skipped',detail:'礼包码已过期，尚未发送'});continue;}
+      if(publicGiftCodes.isExpired(r.code)||r.expiresAt&&Date.parse(r.expiresAt+'T23:59:59.999+08:00')<Date.now()){Object.assign(r,{status:'skipped',detail:'礼包码已过期，尚未发送'});continue;}
       try {
         await dispatch((client,enabled)=>throughSendGate(async()=>{
           stop||=shared.stop;
           if(options.shouldContinue?.()===false)stop='自动兑换已关闭或服务正在停止，尚未发送';
           if(stop){Object.assign(r,{status:'skipped',detail:stop});return;}
-          if(publicGiftCodes.isExpired(r.code)){Object.assign(r,{status:'skipped',detail:'礼包码已过期，尚未发送'});return;}
+          if(publicGiftCodes.isExpired(r.code)||r.expiresAt&&Date.parse(r.expiresAt+'T23:59:59.999+08:00')<Date.now()){Object.assign(r,{status:'skipped',detail:'礼包码已过期，尚未发送'});return;}
           if(enabled?.()===false)throw Error('账号连接已变化');
           Object.assign(r,{at:new Date().toISOString(),status:'sending',detail:'等待服务器回包'});
           store(id,job.rows);
           try {
             const reply=rewardData(await client.request('GotGiftCodeRequest',{giftCode:r.code},'GotRewardResponse',8000));
             if(!hasReward(reply))throw Error('未取得可核对的奖励明细');
-            const rewards=(reply.reward?.asset??[]).map(a=>a.id+' ×'+a.num);
+            const resources = { GOLD: '金币', RUBY: '钻石', EXP: '经验' };
+            const rewards = (reply.reward?.asset ?? [])
+              .filter(asset => typeof asset.id === 'string' && Number(asset.num) > 0)
+              .map(asset => (Object.hasOwn(resources, asset.id) ? resources[asset.id] : asset.id) + ' ×' + asset.num);
             for(const [k,label] of Object.entries({hero:'英雄',antique:'藏品',equipIds:'装备',badge:'徽章',tickets:'券',supply:'补给'})){
               if(reply[k]?.length)rewards.push(label+' ×'+reply[k].length);
             }
             Object.assign(r,{status:'success',detail:rewards.join('、')});
+            try { publicGiftCodes.rememberReward(r.code, r.detail); }
+            catch { /* A catalog write failure must not turn confirmed redemption into an unknown result. */ }
           }catch(error){
             const name=client.promptNames?.[error.prompt?.prompt];
             if(error.prompt && error.request==='GotGiftCodeRequest'){
@@ -125,8 +136,8 @@ export function startGiftCodeBatch(targets,input) {
   return targets.map(({id,dispatch,blocked,codes:personalCodes})=>{
     try {
       if(blocked)throw Error(blocked);
-      const codes=personalCodes??input;
-      if(typeof codes!=='string'||!codes.trim())throw Error('该账号暂无未兑换的礼包码');
+      const codes=personalCodes ?? input;
+      if(typeof codes!=='string'||!codes.trim())throw Error('该账号暂无未兑换的公共礼包码');
       return {id,accepted:true,done:startGiftCodes(id,codes,dispatch,shared).done};
     }catch(error){ return {id,accepted:false,error:error.message}; }
   });

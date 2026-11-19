@@ -5,7 +5,7 @@ bindConsoleSlice('inventory', { inventoryData, inventoryOwner, inventoryQuery },
   inventoryQuery = state.inventoryQuery;
 });
 
-function resetInventory(){setConsoleValue('inventory', 'inventoryQuery', null);setConsoleValue('inventory', 'inventoryData', []);setConsoleValue('inventory', 'inventoryOwner', current);$('inventory-query').value='';$('world-stock-panel').open=false;clear($('world-stock'));$('inventory-match-count').textContent='';}
+function resetInventory(){setConsoleValue('inventory', 'inventoryQuery', null);setConsoleValue('inventory', 'inventoryData', []);setConsoleValue('inventory', 'inventoryOwner', current);$('inventory-query').value='';$('world-stock-panel').open=true;clear($('world-stock'));$('inventory-match-count').textContent='';}
 function renderInventory(stock){
  if(inventoryOwner!==current)resetInventory();
  if(JSON.stringify(inventoryData)!==JSON.stringify(stock)||inventoryQuery===null){setConsoleValue('inventory', 'inventoryData', stock);paintInventory();}

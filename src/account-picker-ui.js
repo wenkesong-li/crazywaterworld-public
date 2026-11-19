@@ -30,12 +30,19 @@ function renderAccountPicker(activeStatus) {
   const title = $('account-picker-title');
   const tag = $('account-picker-status');
   trigger.disabled = !accounts.length;
-  title.textContent = selected?.title || (accounts.length ? '选择账号' : '没有账号');
+  const seen = selected?.lastSeen;
+  const channels = { wechat: '微信', alipay: '支付宝', phone: '益世界 APP', douyin: '抖音', 'douyin-mitm': '抖音' };
+  const channel = $('account-channel');
+  const world = $('account-world');
+  channel.hidden = world.hidden = $('account-role-stats').hidden = !selected;
+  channel.textContent = selected ? (Object.hasOwn(channels, selected.source) ? channels[selected.source] : '未知渠道') : '';
+  world.textContent = selected ? seen?.worldName || '未知区服' : '';
+  title.textContent = seen?.nickname || selected?.title || (accounts.length ? '选择账号' : '没有账号');
   tag.hidden = !selected;
   if (selected) {
     const status = accountPickerPresentation(selected, activeStatus);
     paintAccountPickerTag(tag, status.label, status.kind);
-    trigger.title = selected.title + ' · ' + status.detail;
+    trigger.title = [channel.textContent, world.textContent, title.textContent, status.detail].join(' · ');
     trigger.setAttribute('aria-label', '当前账号 ' + trigger.title);
   } else {
     trigger.title = title.textContent;

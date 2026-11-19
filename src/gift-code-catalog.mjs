@@ -585,7 +585,6 @@ const uniqueByCode = rows => {
   });
 };
 const isExpired = (row, now) => row.expiresAt && Date.parse(`${row.expiresAt}T23:59:59.999Z`) < now;
-const chunk = (rows, size) => Array.from({length: Math.ceil(rows.length / size)}, (_, index) => rows.slice(index * size, (index + 1) * size));
 
 export function initialGiftCodeCatalog(now = Date.now()) {
   const rows = ROWS.map(row => ({ ...row, expired: Boolean(isExpired(row, now)) }));
@@ -599,7 +598,7 @@ export function initialGiftCodeCatalog(now = Date.now()) {
     expired: rows.filter(row => row.expired).length,
     codes: rows,
     tryCodes: tryRows.map(row => row.code),
-    batches: chunk(tryRows.map(row => row.code), 100),
+    batches: tryRows.length?[tryRows.map(row=>row.code)]:[],
   };
 }
 

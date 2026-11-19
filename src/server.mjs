@@ -1,3 +1,5 @@
+import { createSettingsHistory } from './custom/settings-history.mjs';
+import { previewEnableAll } from './custom/settings-enable-all.mjs';
 import { serveClientAsset } from './ui-assets.mjs';
 import { normalizeConsoleHost, consoleUrl } from './console-address.mjs';
 import { createConsoleVersion, renderVersionedPage, consoleVersionError } from './console-version.mjs';
@@ -15,8 +17,8 @@ import {readActivityStatistics} from './activity-statistics.mjs';
 import { merchantActivity, readMerchantStatus, readMerchantJournal, merchantJournalSummary } from './merchant-activity.mjs';
 import { watchMerchant } from './merchant-monitor.mjs';
 import { giftCodeStatus, giftCodeSummary, startGiftCodes, startGiftCodeBatch } from './gift-codes.mjs';
-import { publicGiftCodes } from './gift-code-library.mjs';
-import { createGiftCodeAutomation } from './gift-code-automation.mjs';
+import { publicGiftCodes, hasGiftCodeHistory } from './custom/gift-code-library.mjs';
+import { createGiftCodeAutomation } from './custom/gift-code-automation.mjs';
 import { paginateGiftRecords, giftRecordsCsv, canRetryGiftRecord, canRetryGiftCode } from './gift-code-records.mjs';
 import {runtimeProgress, museumRuntimeStatus} from './runtime-progress.mjs';
 import {watchTreasureTravel} from './treasure-follow.mjs';
@@ -165,6 +167,7 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
   captureController = { startCapture, stopCapture, captureState, inspectCaptureRecovery, recoverCapture } } = {}) {
   host = normalizeConsoleHost(host);
   const consoleVersion = createConsoleVersion(PAGE);
+  const settingsHistory = createSettingsHistory(DATA_DIR);
   const pageRaw = Buffer.from(renderVersionedPage(PAGE, consoleVersion));
   const pageAsset = { raw: pageRaw, gzip: zlib.gzipSync(pageRaw, { level: 9 }),
     etag: '"' + createHash('sha1').update(pageRaw).digest('hex').slice(0, 16) + '"' };
@@ -2247,10 +2250,32 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
         json(members);
         return;
       }
+      if (route === 'GET /api/settings/history' || route === 'POST /api/settings/history') {
+        const { account } = scoped_(parsed);
+        if (req.method === 'GET') {
+          const id = parsed.searchParams.get('id');
+          json(id ? settingsHistory.get(account.id, id) : { entries: settingsHistory.list(account.id) });
+          return;
+        }
+        const payload = jsonBody();
+        needConfirm(payload);
+        const draft = payload.draft === true;
+        // Recovery drafts may contain incomplete form fields. They are validated before restoration.
+        const document = draft ? { settings: payload.settings } : exportAutomationSettings(
+          validateSettings(payload.settings, { catalog: settingsCatalog(loadConfigSafe({ allowStale: true })) }));
+        if (draft && (!payload.settings || typeof payload.settings !== 'object' || Array.isArray(payload.settings)
+          || Buffer.byteLength(JSON.stringify(payload.settings)) > 256 * 1024)) throw Error('当前草稿无法保存');
+        json(settingsHistory.save(account.id, payload.name, document, { draft }));
+        return;
+      }
       if (route === 'POST /api/settings/validate') {
         const { session } = scoped_(parsed);
         const payload = jsonBody();
         const options = { catalog: settingsCatalog(loadConfigSafe({ allowStale: true })) };
+        if (payload.enableAll !== undefined) {
+          json(previewEnableAll(payload.settings, payload.enableAll, options, payload.confirmSpending === true));
+          return;
+        }
         const settings = payload.document ? importAutomationSettings(payload.document, options) : validateSettings(payload.settings, options);
         json({ settings, revision: session.preferencesRevision, document: exportAutomationSettings(settings) });
         return;
@@ -3030,87 +3055,141 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
       }
 
       // ---- 只读视图 ----
-      if (parsed.pathname.startsWith('/api/gift-codes')) res.setHeader('cache-control', 'no-store');
-      if (route === 'GET /api/gift-codes/initial' || route === 'POST /api/gift-codes/load') {
-        const payload = req.method === 'POST' ? jsonBody() : null;
-        if (payload) needConfirm(payload);
-        const known = new Map(loadStore().accounts.map(account => [account.id, account]));
-        const selected = payload ? payload.accounts
-          : parsed.searchParams.has('accounts') ? JSON.parse(parsed.searchParams.get('accounts'))
-          : parsed.searchParams.has('account') ? [resolve(parsed).account.id] : [...known.keys()].slice(0, 1);
-        if (!Array.isArray(selected) || selected.some(id => typeof id !== 'string' || !known.has(id))) throw Error('所选账号不存在，请刷新账号列表');
-        if (payload) {
-          try { await publicGiftCodes.refresh({ force: true }); }
-          catch (error) { if (!publicGiftCodes.entries().length) throw error; }
-        }
-        const histories = [...new Set(selected)].map(id => giftCodeStatus(id).rows);
-        for (const rows of histories) publicGiftCodes.reconcile(rows);
-        const available = new Set(histories.flatMap(rows => publicGiftCodes.available(rows)));
-        const displayRows = publicGiftCodes.entries().map(entry => ({
-          code: entry.code, expiresAt: entry.expiresAt ?? null,
-          eligible: !selected.length || available.has(entry.code),
-        }));
-        const tryCodes = displayRows.filter(row => row.eligible).map(row => row.code);
-        json({ ...publicGiftCodes.view(), displayRows, tryCodes, available: tryCodes.length });
-        if (payload) void giftAutomation.check();
-        return;
-      }
-      if (route === 'POST /api/gift-codes/manual') {
-        const payload = jsonBody(); needConfirm(payload);
-        const result = publicGiftCodes.addManualBatch(payload.codes, payload.expiresAt);
-        void giftAutomation.check();
-        json(result);
-        return;
-      }
-      if (route === 'POST /api/gift-codes/auto') {
-        const payload = jsonBody(); needConfirm(payload);
-        const { account } = resolve(parsed);
-        const preference = publicGiftCodes.setAuto(account.id, payload.enabled);
-        let syncError = '';
-        if (preference.enabled) {
-          try { await publicGiftCodes.refresh({ force: true }); } catch (error) { syncError = error.message; }
-          void giftAutomation.check();
-        }
-        json({ enabled: preference.enabled, syncError });
-        return;
-      }
-      if (route === 'GET /api/gift-codes' || route === 'GET /api/gift-codes/export') {
-        const { account } = resolve(parsed);
-        const data = giftCodeStatus(account.id);
-        const status = parsed.searchParams.get('status') || 'exclude-invalid';
-        if (route.endsWith('/export')) {
-          const csv = giftRecordsCsv(data.rows, status);
-          res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="gift-code-records.csv"', 'cache-control': 'no-store' });
-          res.end(csv);
+      if(parsed.pathname.startsWith('/api/gift-codes'))res.setHeader('cache-control','no-store');
+      if (route === 'GET /api/gift-codes/fetch-history') {
+        const id = parsed.searchParams.get('id');
+        if (!id) {
+          json({ batches: publicGiftCodes.fetchHistory() });
           return;
         }
-        const page = paginateGiftRecords(data.rows, {
-          status, page: parsed.searchParams.get('page') || '1', pageSize: parsed.searchParams.get('pageSize') || '10',
+        const batch = publicGiftCodes.fetchHistory(id);
+        const selected = JSON.parse(parsed.searchParams.get('accounts') ?? '[]');
+        const accounts = new Map(loadStore().accounts.map(account => [account.id, account]));
+        if (!Array.isArray(selected) || selected.some(accountId => !accounts.has(accountId))) throw Error('请选择当前可用的游戏账号');
+        const histories = [...new Set(selected)].map(accountId => {
+          const { rows } = giftCodeStatus(accountId);
+          publicGiftCodes.reconcile(rows);
+          const byCode = new Map();
+          for (const row of rows) {
+            if (!byCode.has(row.code) && (row.status !== 'skipped' || hasGiftCodeHistory(row))) byCode.set(row.code, row);
+          }
+          return { title: describeAccount(accounts.get(accountId)).title, byCode };
         });
-        json({ ...page, running: data.running, rows: page.rows.map(row => ({ ...row,
-          retryable: canRetryGiftRecord(row) && canRetryGiftCode(data.rows, row.code) && !publicGiftCodes.isExpired(row.code),
-        })) });
+        const currentCodes = new Set(publicGiftCodes.entries().map(row => row.code));
+        const rows = batch.rows.map(row => {
+          const expired = publicGiftCodes.isExpired(row.code) || (row.expiresAtMs != null ? row.expiresAtMs < Date.now()
+            : row.expiresAt && Date.parse(row.expiresAt + 'T23:59:59.999+08:00') < Date.now());
+          return {
+            ...row, availability: expired ? '已过期' : currentCodes.has(row.code) ? '待游戏验证' : '已下架',
+            usage: histories.map(({ title, byCode }) => {
+              const latest = byCode.get(row.code);
+              return { title, status: latest?.status ?? 'unused', detail: latest?.detail ?? '' };
+            }),
+          };
+        });
+        json({ ...batch, rows });
         return;
       }
-      if (route === 'POST /api/gift-codes/retry') {
-        const payload = jsonBody(); needConfirm(payload);
-        if (typeof payload.code !== 'string' || !payload.code || payload.code.length > 128 || /[\s,，;；]/u.test(payload.code)) throw Error('请选择一条礼包码记录');
-        const { account } = resolve(parsed), target = giftCodeTarget(account);
-        if (target.blocked) throw Error(target.blocked);
-        const job = startGiftCodes(account.id, payload.code, target.dispatch, { stop: '' }, { retry: true });
-        job.done.catch(() => emit(target.session, 'error', '礼包兑换中断，请核对游戏内奖励'));
-        json({ accepted: true });
+      if (route === 'GET /api/gift-codes/channels' || route === 'POST /api/gift-codes/channels') {
+        if (req.method === 'GET') json({ channels: publicGiftCodes.channels() });
+        else {
+          const payload = jsonBody();
+          needConfirm(payload);
+          if (publicGiftCodes.channels().some(channel => channel.id === payload.id && channel.fixed)) throw Error('内置公共礼包码渠道不可修改或移除');
+          json({ channels: publicGiftCodes.updateChannel(payload) });
+        }
         return;
+      }
+      if(route==='GET /api/gift-codes/initial'||route==='POST /api/gift-codes/load'){
+        const known=new Map(loadStore().accounts.map(account=>[account.id,account]));
+        const loading=route==='POST /api/gift-codes/load';
+        const payload=loading?jsonBody():null;if(loading)needConfirm(payload);
+        const selected=loading?payload.accounts:parsed.searchParams.has('accounts')?JSON.parse(parsed.searchParams.get('accounts'))
+          :parsed.searchParams.get('account')?[resolve(parsed).account.id]:[...known.keys()].slice(0,1);
+        if(!Array.isArray(selected)||selected.some(id=>typeof id!=='string'||!known.has(id)))throw Error('请选择当前可用的游戏账号');
+        if (loading) await publicGiftCodes.refresh({ force: true });
+        const fetched = loading ? publicGiftCodes.view().lastFetch : null;
+        const stats = fetched ? {
+          fetched: fetched.codes.length, added: fetched.added, channels: fetched.channels,
+          accounts: [...new Set(selected)].map(id => {
+            const history = new Map();
+            for (const row of giftCodeStatus(id).rows) {
+              const prior = history.get(row.code);
+              if (['success', 'used'].includes(row.status) || !prior && hasGiftCodeHistory(row)) history.set(row.code, row.status);
+            }
+            const statuses = fetched.codes.map(code => history.get(code));
+            const used = statuses.filter(status => status === 'success' || status === 'used').length;
+            const unverified = statuses.filter(status => !status || ['unknown', 'queued', 'sending', 'skipped'].includes(status)).length;
+            return { title: describeAccount(known.get(id)).title, used, unverified, rejected: statuses.length - used - unverified };
+          }),
+        } : null;
+        if (!selected.length) {
+          const displayRows = publicGiftCodes.entries().map(entry => ({ ...entry, usage: [], eligible: true }));
+          json({ ...publicGiftCodes.view(), displayRows, tryCodes: [], available: 0, fetchStats: stats });
+          return;
+        }
+        const available=new Set(),display=new Map();
+        for(const id of new Set(selected)){
+          const {rows}=giftCodeStatus(id);publicGiftCodes.reconcile(rows);const usable=new Set(publicGiftCodes.available(rows,id));
+          for(const code of usable)available.add(code);
+          for(const entry of publicGiftCodes.entries(id)){
+            const history=rows.filter(row=>row.code===entry.code&&hasGiftCodeHistory(row));
+            const previous=history.find(row=>['success','used'].includes(row.status))??history.find(row=>row.status==='unknown')??history.find(row=>['sending','queued'].includes(row.status))??history[0];
+            let row=display.get(entry.code);if(!row){row={...entry,usage:[],eligible:false};display.set(entry.code,row);}
+            if(entry.expiresAt&&(!row.expiresAt||entry.expiresAt<row.expiresAt))row.expiresAt=entry.expiresAt;
+            row.eligible ||= usable.has(entry.code);
+            row.usage.push({account:id,title:describeAccount(known.get(id)).title,status:previous?.status==='skipped'?'recorded':previous?.status??'unused'});
+          }
+        }
+        const catalog=publicGiftCodes.view();
+        json({...catalog,tryCodes:[...available],displayRows:[...display.values()],available:available.size,fetchStats:stats});if(loading)void giftAutomation.check();return;
+      }
+      if (route === 'POST /api/gift-codes/shared') {
+        const payload = jsonBody();
+        needConfirm(payload);
+        const codes = publicGiftCodes.addSharedBatch(payload.codes, payload.expiresAt);
+        void giftAutomation.check();
+        json({ codes });
+        return;
+      }
+      if(route==='POST /api/gift-codes/manual'){
+        const payload=jsonBody();needConfirm(payload);const known=new Set(loadStore().accounts.map(account=>account.id));
+        if(!Array.isArray(payload.accounts)||!payload.accounts.length||payload.accounts.some(id=>typeof id!=='string'||!known.has(id)))throw Error('请选择当前可用的游戏账号');
+        const code=typeof payload.code==='string'?payload.code.trim():payload.code;
+        const ids=[...new Set(payload.accounts)].filter(id=>!giftCodeStatus(id).rows.some(row=>row.code===code&&hasGiftCodeHistory(row)));
+        publicGiftCodes.addManual(ids,code,payload.expiresAt);if(ids.length)void giftAutomation.check();json({saved:ids.length,ignored:payload.accounts.length-ids.length});return;
+      }
+      if(route==='POST /api/gift-codes/auto'){
+        const payload=jsonBody();needConfirm(payload);const {account}=resolve(parsed);
+        const preference=publicGiftCodes.setAuto(account.id,payload.enabled);
+        let syncError='';
+        if(preference.enabled){try{await publicGiftCodes.refresh();}catch(error){syncError=error.message;}void giftAutomation.check();}
+        json({enabled:preference.enabled,syncError});return;
+      }
+      if(route==='GET /api/gift-codes' || route==='GET /api/gift-codes/export'){
+        const {account}=resolve(parsed);
+        const data=giftCodeStatus(account.id);
+        const status=parsed.searchParams.get('status') || 'exclude-invalid';
+        if(route.endsWith('/export')){
+          const csv=giftRecordsCsv(data.rows,status);
+          res.writeHead(200,{'content-type':'text/csv; charset=utf-8','content-disposition':'attachment; filename="gift-code-records.csv"','cache-control':'no-store'});
+          res.end(csv);return;
+        }
+        const page=paginateGiftRecords(data.rows,{status,page:parsed.searchParams.get('page') || '1',pageSize:parsed.searchParams.get('pageSize') || '10'});
+        json({...page,rows:page.rows.map(row=>({...row,retryable:canRetryGiftRecord(row)&&canRetryGiftCode(data.rows,row.code)&&!publicGiftCodes.isExpired(row.code)})),running:data.running});return;
+      }
+      if(route==='POST /api/gift-codes/retry'){
+        const payload=jsonBody();needConfirm(payload);const {account}=resolve(parsed);
+        if(typeof payload.code!=='string'||!payload.code||/[\s,，;；]/u.test(payload.code))throw Error('请选择一条礼包码记录');
+        const target=giftCodeTarget(account);if(target.blocked)throw Error(target.blocked);
+        const job=startGiftCodes(account.id,payload.code,target.dispatch,{stop:''},{retry:true});
+        job.done.catch(()=>{});json({accepted:true});return;
       }
       if(route==='GET /api/gift-codes/accounts'){
         json({accounts:loadStore().accounts.map(account=>{
           const session=sessionFor(account.id);
           const base={id:account.id,title:describeAccount(account).title,paused:session.paused,connected:Boolean(session.client?.connected)};
-          try {
-            const { rows } = giftCodeStatus(account.id);
-            publicGiftCodes.reconcile(rows);
-            return { ...base, ...giftCodeSummary(account.id), autoRedeem: publicGiftCodes.auto(account.id).enabled, available: publicGiftCodes.available(rows).length };
-          }
+          try{const {rows}=giftCodeStatus(account.id);publicGiftCodes.reconcile(rows);return {...base,...giftCodeSummary(account.id),autoRedeem:publicGiftCodes.auto(account.id).enabled,available:publicGiftCodes.available(rows,account.id).length};}
           catch(error){return {...base,running:false,total:0,counts:{},error:error.message};}
         })});return;
       }
@@ -3122,13 +3201,7 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
         const targets=[...new Set(payload.accounts)].map(id=>{
           const account=known.get(id);
           if(!account)return {id,title:id,blocked:'账号不存在'};
-          const target = giftCodeTarget(account);
-          if (payload.library === true) {
-            const { rows } = giftCodeStatus(id);
-            publicGiftCodes.reconcile(rows);
-            target.codes = publicGiftCodes.available(rows).join('\n');
-          }
-          return target;
+          return {...giftCodeTarget(account),...(payload.library===true?{codes:publicGiftCodes.available(giftCodeStatus(id).rows,id).join('\n')}:{})};
         });
         const results=startGiftCodeBatch(targets,payload.library===true?null:payload.codes).map((result,index)=>({...result,...targets[index]}));
         const started=results.filter(result=>result.accepted);
@@ -3799,6 +3872,50 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
           session.productionPlanRead = job;
         }
         json(await session.productionPlanRead);
+        return;
+      }
+      if (['GET /api/account-metrics', 'GET /api/bag/antiques', 'GET /api/bag/heroes'].includes(route)) {
+        const { session, account } = scoped_(parsed);
+        const client = session.client;
+        const player = session.player;
+        const level = player?.level ?? account.lastSeen?.level ?? null;
+        const power = normalize(player?.power ?? account.lastSeen?.power ?? null);
+        const isMetrics = route === 'GET /api/account-metrics';
+        if (!client?.connected || session.paused) {
+          json(isMetrics ? { level, power, gold: null, ruby: null } : { reason: '请先连接当前游戏账号' });
+          return;
+        }
+        const result = await readJob(session, async () => {
+          if (session.client !== client || session.player !== player || session.paused) throw Error('当前游戏连接已变化');
+          if (isMetrics) {
+            const { list } = normalize(await client.request('AllResourceRequest', {}, 'AllResourceResponse', 8000));
+            const amount = id => {
+              const value = list?.find(row => row.res === id)?.amount;
+              return Number.isSafeInteger(value) && value >= 0 ? value : null;
+            };
+            return { level, power, gold: amount(3), ruby: amount(4) };
+          }
+          if (route === 'GET /api/bag/heroes') {
+            const { heroes } = normalize(await client.request('AllHeroRequest', {}, 'AllHeroResponse', 8000));
+            if (!Array.isArray(heroes)) throw Error('英雄数据未同步');
+            return { heroes: heroes.map(({ heroId, level, star, power }) =>
+              ({ name: heroId, level, star, power, icon: heroIcon(heroId) })) };
+          }
+          const config = loadConfigSafe();
+          const required = config?.tables?.ModuleOpenCfg?.data?.find(row => row.moduleId === '藏品')?.playerLevel;
+          if (required && level < required) return { reason: '角色 ' + required + ' 级开放藏品' };
+          const data = normalize(await client.request('AllAntiqueRequest', {}, 'AllAntiqueResponse', 8000));
+          if (!Array.isArray(data.antiques) || !Array.isArray(data.suits)) throw Error('藏品数据未同步');
+          const names = new Map((config?.tables?.AntiqueBaseCfg?.data ?? []).map(row => [row.antiqueId, row.showName]));
+          const suits = new Map((config?.tables?.AntiqueSuitCfg?.data ?? []).map(row => [row.suitId, row.suitName]));
+          return {
+            masterLv: data.masterLv,
+            antiques: data.antiques.map(row => ({ name: names.get(row.id) || row.id, detail: row.star + ' 星' })),
+            suits: data.suits.map(row => ({ name: suits.get(row.id) || '套装 ' + row.id, detail: row.level + ' 级' })),
+          };
+        }, { recoverFormation: false });
+        if (session.client !== client || session.player !== player || session.paused) throw Error('当前游戏连接已变化');
+        json(result);
         return;
       }
       if (route === 'GET /api/world') {

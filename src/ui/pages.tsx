@@ -7,7 +7,7 @@ import { Switch } from "./switch"
 import { HelpTip } from "./help-tip"
 import { Badge } from "./badge"
 import { DialogFooter, DialogHeader, DialogTitle } from "./dialog"
-import { MessageCircle, Music2, Plus, QrCode, Smartphone, X } from "lucide-react"
+import { MessageCircle, Copy, Check, Package, Gem, UsersRound, Plus, QrCode, Smartphone, Music2, X } from "lucide-react"
 
 function Panel({title, help, titleAfter, children}: {title: string; help?: string; titleAfter?: React.ReactNode; children: React.ReactNode}) {
   return <Card><CardHeader><CardTitle className="title-with-help">{title}{help && <HelpTip title={title}>{help}</HelpTip>}</CardTitle>{titleAfter && <CardAction className="row-span-1 self-center max-md:col-span-2 max-md:col-start-1 max-md:row-start-2 max-md:justify-self-start">{titleAfter}</CardAction>}</CardHeader><CardContent>{children}</CardContent></Card>
@@ -15,16 +15,38 @@ function Panel({title, help, titleAfter, children}: {title: string; help?: strin
 
 export function giftCodesPage() {
   return renderToStaticMarkup(<div className="grid gap-3">
-    <Panel title="礼包兑换">
-      <div className="bar"><Button variant="outline" size="sm" id="gift-select-all">全选</Button><Button variant="outline" size="sm" id="gift-select-none">清空</Button><span id="gift-selected-count" className="dim" /></div>
-      <div id="gift-account-list" className="gift-account-list" role="group" aria-label="兑换账号" />
-      <div className="bar gift-redeem-actions"><Button id="gift-code-start" disabled>开始兑换</Button><span id="gift-code-state" role="status" aria-live="polite" /></div>
-    </Panel>
-    <Panel title="共享礼包码库">
-      <div className="bar gift-library-toolbar"><Button type="button" variant="outline" size="sm" id="gift-load-initial">载入未兑换码</Button><Button type="button" variant="outline" size="sm" id="gift-batch-add" aria-haspopup="dialog" aria-controls="gift-batch-dialog">批量新增</Button><label><input id="gift-show-processed" type="checkbox" /> 显示已处理</label></div>
+    <Panel title="礼包兑换" help="每个账号独立排队，兑换请求逐个发送。账号登录失败或结果未知只停止该账号；任一账号遇到服务器限频时，同批尚未发送的账号全部停止，之后可继续提交。">
+      <div className="bar"><Button type="button" variant="outline" size="sm" id="gift-load-initial">获取最新礼包码</Button><Button type="button" variant="outline" size="sm" id="gift-channels-open" data-console-admin="true">获取渠道管理</Button><Button type="button" variant="outline" size="sm" id="gift-fetch-history-open">抓取日志</Button><Button type="button" variant="outline" size="sm" id="gift-add-row">新增礼包码行</Button><Button type="button" variant="outline" size="sm" id="gift-batch-add" data-console-admin="true" aria-haspopup="dialog" aria-controls="gift-batch-dialog">批量新增共享码</Button><label><input id="gift-show-processed" type="checkbox" /> 显示已处理</label></div>
+      <template id="gift-copy-button-template"><button className="gift-copy-button" type="button" aria-label="复制礼包码" title="复制礼包码"><span data-copy-idle><Copy aria-hidden="true" /></span><span data-copy-success hidden><Check aria-hidden="true" /></span></button></template>
+      <dialog id="gift-channels-dialog" aria-labelledby="gift-channels-title">
+        <DialogHeader className="gift-fetch-header"><DialogTitle id="gift-channels-title">礼包码获取渠道</DialogTitle><Button id="gift-channels-close" type="button" variant="outline" size="sm"><X aria-hidden="true" />关闭</Button></DialogHeader>
+        <p className="dim">内置公共渠道固定。管理员可添加和编辑自建渠道，所有渠道都会参与抓取。</p>
+        <div id="gift-channels-list" />
+        <form id="gift-channel-form" hidden>
+          <label>渠道名称<Input id="gift-channel-name" maxLength={40} required /></label>
+          <label>公开 HTTPS 网址<Input id="gift-channel-url" type="url" maxLength={1000} placeholder="https://…" required /></label>
+          <label>数据格式<select id="gift-channel-format"><option value="wiki">Wiki 兼容 JSON 接口</option><option value="article">游侠网格式文章</option></select></label>
+        </form>
+        <p id="gift-channels-status" className="dim" role="status" />
+        <DialogFooter><Button id="gift-channel-add" type="button">新增渠道</Button><Button id="gift-channel-save" type="submit" form="gift-channel-form" hidden>保存渠道</Button><Button id="gift-channel-cancel" type="button" variant="outline" hidden>取消编辑</Button></DialogFooter>
+      </dialog>
+      <dialog id="gift-fetch-history-dialog" aria-labelledby="gift-fetch-history-title">
+        <DialogHeader className="gift-fetch-header"><DialogTitle id="gift-fetch-history-title">礼包码抓取日志</DialogTitle><Button id="gift-fetch-history-dismiss" type="button" variant="outline" size="sm"><X aria-hidden="true" />关闭</Button></DialogHeader>
+        <Button id="gift-fetch-history-back" type="button" variant="outline" size="sm" hidden>返回批次</Button>
+        <p id="gift-fetch-history-status" className="dim" role="status" />
+        <div id="gift-fetch-history-body" />
+      </dialog>
+      <div id="gift-fetch-report" className="gift-fetch-report" role="status" hidden />
       <p id="gift-code-initial-note" className="dim" role="status" />
-      <div className="gift-library-table"><table><thead><tr><th scope="col">礼包码</th><th scope="col">可用状态</th><th scope="col">到期日期（北京时间）</th></tr></thead><tbody id="gift-code-library-rows" /></table></div>
-    </Panel>
+      <div className="gift-library-table"><table><thead><tr><th>礼包码</th><th>可用状态</th><th>使用状态</th><th>到期日期（北京时间）</th><th>来源 / 操作</th></tr></thead><tbody id="gift-code-library-rows" /><tbody id="gift-code-manual-rows" /></table></div>
+      <p className="dim">新增行仅保存到勾选的账号，自动兑换开启后会自动处理。有效期留空表示未注明，需由游戏确认；明确过期会全局下架。</p>
+      <fieldset className="gift-accounts"><legend>兑换账号</legend>
+        <div className="bar"><Button variant="outline" size="sm" id="gift-select-all">全选</Button><Button variant="outline" size="sm" id="gift-select-none">清空</Button><span id="gift-selected-count" className="dim" /></div>
+        <div id="gift-account-list" className="gift-account-list" />
+        <p className="dim">自动兑换默认关闭。每天8点同步，手动获取会重新访问各渠道；新账号也能兑换历史有效码。已兑换、待确认的码不重发，限频及未发送的余码会续兑。</p>
+        <p className="dim">暂停时可维护礼包码，恢复后才兑换；共享游戏账号共用开关。未连接会自动登录，可能将正在玩的游戏顶下线。</p>
+      </fieldset>
+      <div className="bar"><Button id="gift-code-start">开始兑换</Button><span id="gift-code-state" role="status" /></div></Panel>
     <Panel title="兑换记录">
       <div className="bar gift-record-toolbar">
         <label htmlFor="gift-record-account">查看账号</label><select id="gift-record-account" />
@@ -32,19 +54,13 @@ export function giftCodesPage() {
           <option value="exclude-invalid">排除失效/不可用</option><option value="all">全部状态</option><option value="invalid">失效/不可用</option>
           <option value="retryable">可手动重试</option><option value="success">兑换成功</option><option value="used">已兑换</option><option value="rejected">服务器拒绝</option>
           <option value="unknown">待确认</option><option value="skipped">未发送</option><option value="queued">待兑换</option><option value="sending">兑换中</option>
-        </select><Button id="gift-record-export" variant="outline" disabled>导出 CSV</Button>
+        </select><Button id="gift-record-export" variant="outline">导出 CSV</Button>
       </div>
+      <p className="dim">失效/不可用包含过期、无效、不在有效期、达到兑换上限及已由其他账号兑换。可手动重试包含限频及未识别提示码的明确拒绝；成功、已兑换、待确认及明确失效的码不可重试。导出包含当前账号和状态条件下的全部记录。</p>
       <p id="gift-record-notice" className="dim" role="status" aria-live="polite" />
-      <div className="overflow-auto table-stack"><table><thead><tr>{['礼包码','状态','结果','时间','操作'].map(title=><th scope="col" key={title}>{title}</th>)}</tr></thead><tbody id="gift-code-history" /></table></div>
-      <div className="bar gift-record-pagination"><label htmlFor="gift-page-size">每页</label><select id="gift-page-size" defaultValue="10">{[10,20,50,100].map(size=><option key={size} value={size}>{size} 条</option>)}</select><Button variant="outline" id="gift-prev" disabled>上一页</Button><span id="gift-page" role="status" /><Button variant="outline" id="gift-next" disabled>下一页</Button></div>
+      <div className="gift-record-table overflow-auto"><table><thead><tr>{['礼包码','渠道','兑换方式','状态','结果','时间','操作'].map(t=><th key={t}>{t}</th>)}</tr></thead><tbody id="gift-code-history" /></table></div>
+      <div className="bar"><label htmlFor="gift-page-size">每页</label><select id="gift-page-size" defaultValue="10">{[10,20,50,100].map(n=><option key={n} value={n}>{n} 条</option>)}</select><Button variant="outline" id="gift-prev">上一页</Button><span id="gift-page" role="status" /><Button variant="outline" id="gift-next">下一页</Button></div>
     </Panel>
-    <dialog id="gift-batch-dialog" aria-labelledby="gift-batch-title">
-      <DialogHeader><DialogTitle id="gift-batch-title">批量新增礼包码</DialogTitle></DialogHeader>
-      <div className="gift-batch-fields"><label htmlFor="gift-batch-input">礼包码</label><textarea id="gift-batch-input" rows={8} maxLength={65536} placeholder="每行一个礼包码" />
-        <label htmlFor="gift-batch-expiry">到期日期（选填，北京时间）</label><Input id="gift-batch-expiry" type="date" />
-        <p id="gift-batch-error" role="status" aria-live="polite" /></div>
-      <DialogFooter><Button id="gift-batch-save" type="button">保存</Button><Button id="gift-batch-cancel" type="button" variant="outline">取消</Button></DialogFooter>
-    </dialog>
   </div>)
 }
 
@@ -153,10 +169,29 @@ export function manualPage() {
 }
 
 export function inventoryPage() {
-  return renderToStaticMarkup(<div className="grid gap-3"><Panel title="仓库">
+  return renderToStaticMarkup(<div className="grid gap-3"><Panel title="背包">
+    <div className="bag-tabs" role="group" aria-label="背包分类">
+      <Button type="button" variant="outline" data-bag-tab="items" aria-pressed="true"><Package aria-hidden="true" />道具</Button>
+      <Button type="button" variant="outline" data-bag-tab="antiques" aria-pressed="false"><Gem aria-hidden="true" />藏品</Button>
+      <Button type="button" variant="outline" data-bag-tab="heroes" aria-pressed="false"><UsersRound aria-hidden="true" />英雄</Button>
+    </div>
+    <div id="bag-items">
     <div className="bar"><Button id="inventory-refresh" variant="outline">刷新库存</Button><span id="inventory-status" className="dim" role="status">尚未读取</span></div>
     <div className="bar inventory-search"><label htmlFor="inventory-query">资源名称</label><Input id="inventory-query" type="search" placeholder="搜索资源名称" /><span id="inventory-match-count" className="dim" /></div>
-    <details id="world-stock-panel"><summary>展开分类库存</summary><div id="world-stock" /></details>
+    <details id="world-stock-panel" open><summary>分类库存</summary><div id="world-stock" /></details>
+    </div>
+    <div id="bag-heroes" hidden>
+      <div className="bar"><Button id="bag-hero-refresh" type="button" variant="outline">刷新英雄</Button><span id="bag-hero-status" role="status" className="dim" /></div>
+      <div className="bag-search"><label htmlFor="bag-hero-query">搜索英雄</label><Input id="bag-hero-query" type="search" placeholder="输入名称" /></div>
+      <p id="bag-hero-matches" className="dim" role="status" hidden />
+      <div id="bag-hero-list" className="bag-hero-grid" />
+    </div>
+    <div id="bag-antiques" hidden>
+      <div className="bar"><Button id="bag-antique-refresh" type="button" variant="outline">刷新藏品</Button><span id="bag-antique-status" role="status" className="dim" /></div>
+      <div className="bag-search"><label htmlFor="bag-antique-query">搜索藏品或套装</label><Input id="bag-antique-query" type="search" placeholder="输入名称" /></div>
+      <p id="bag-antique-matches" className="dim" role="status" hidden />
+      <div id="bag-antique-list" className="bag-antique-grid" />
+    </div>
   </Panel></div>)
 }
 

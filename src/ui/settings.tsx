@@ -6,14 +6,32 @@ import { HelpTip } from "./help-tip"
 export function settingsPage() {
   return renderToStaticMarkup(<div id="config-root">
     <div className="config-toolbar">
-      <div className="config-owner"><div className="title-with-help"><strong id="config-account-name">当前账号的挂机配置</strong><HelpTip title="挂机配置">各模块的挂机开关与执行细项、策略、权限和参数统一在对应配置中设置。关闭模块会保留已选细项。修改后自动保存，无需点击保存。停止输入约0.6秒后提交，校验失败会提示修正。只更新当前账号，不会启动挂机；已有挂机在下次检查时使用新设置。全局挂机启停和间隔在页头控制。</HelpTip></div><span id="config-state" role="status" aria-live="polite">尚未载入</span></div>
+      <div className="config-owner"><div className="title-with-help"><strong id="config-account-name">挂机配置</strong><HelpTip title="挂机配置">各模块的挂机开关与执行细项、策略、权限和参数统一在对应配置中设置。关闭模块会保留已选细项。修改后自动保存，无需点击保存。停止输入约0.6秒后提交，校验失败会提示修正。只更新当前账号，不会启动挂机；已有挂机在下次检查时使用新设置。全局挂机启停和间隔在页头控制。</HelpTip></div><span id="config-state" role="status" aria-live="polite">尚未载入</span></div>
       <div className="config-actions">
+        <Button id="config-history-save" type="button" size="sm" variant="outline" disabled>保存当前配置</Button>
+        <Button id="config-history-open" type="button" size="sm" variant="outline" disabled>历史配置</Button>
+        <Button id="config-enable-all" type="button" size="sm" disabled>一键开启</Button>
         <Button id="config-import" type="button" size="sm" variant="outline" disabled>导入</Button>
         <Button id="config-export" type="button" size="sm" variant="outline" disabled>导出</Button>
         <Button id="config-retry" type="button" size="sm" variant="outline" hidden disabled>重试自动保存</Button>
         <input id="config-file" type="file" accept=".json,application/json" hidden />
       </div>
     </div>
+    <dialog id="config-history-dialog" aria-labelledby="config-history-title">
+      <h2 id="config-history-title">历史配置</h2>
+      <p id="config-history-status" role="status" />
+      <div id="config-history-body" />
+      <div id="config-history-actions" />
+    </dialog>
+    <dialog id="config-enable-all-dialog" aria-labelledby="config-enable-all-title">
+      <h2 id="config-enable-all-title">一键开启挂机功能</h2>
+      <p id="config-enable-all-summary" role="status" />
+      <ul id="config-enable-all-results" />
+      <div className="config-enable-all-actions">
+        <Button id="config-enable-all-close" type="button" variant="outline">取消</Button>
+        <Button id="config-enable-all-run" type="button">确认开启</Button>
+      </div>
+    </dialog>
     <div className="config-message" id="config-message" role="alert" hidden />
     <div className="config-tabs" role="tablist" aria-label="配置分类">
       {[["base", "基地"], ["world", "世界"], ["heroes", "英雄"], ["antique", "藏品"], ["equipment", "装备"], ["daily", "日常与活动"]].map(([key, title], index) =>

@@ -1,18 +1,20 @@
 import * as React from "react"
 import { renderToStaticMarkup } from "react-dom/server"
-import { Boxes, Building2, CalendarDays, Check, ChevronDown, CircleUserRound, Download, LayoutDashboard, Monitor, Moon, MoreHorizontal, RefreshCw, ScrollText, Settings2, Ship, Sun, Swords, UsersRound, X } from "lucide-react"
+import { Backpack, Coins, Gem, Boxes, Building2, CalendarDays, Check, ChevronDown, CircleUserRound, Download, LayoutDashboard, Monitor, Moon, MoreHorizontal, RefreshCw, ScrollText, Settings2, Ship, Sun, Swords, UsersRound, X } from "lucide-react"
 import { Button } from "./button"
 import { Badge } from "./badge"
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "./card"
 import { DialogFooter, DialogHeader, DialogTitle } from "./dialog"
 import { NativeSelect } from "./native-select"
 import { Input } from "./input"
+import { HelpTip } from "./help-tip"
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "./table"
 import { LOG_GROUPS, LOG_GROUP_TONES } from "../log-categories.mjs"
 
 // 手机底栏使用短名。
 const tabs = [
   ["overview", "总览", "总览", LayoutDashboard],
+  ["inventory", "背包", "背包", Backpack],
   ["settings", "挂机配置", "配置", Settings2], ["manual", "建筑一览", "建筑", Building2],
   ["stages", "挑战", "挑战", Swords], ["lineups", "阵容", "阵容", UsersRound],
   ["activities", "活动", "活动", CalendarDays], ["resources", "杂项", "杂项", Boxes],
@@ -33,8 +35,13 @@ export function chrome() {
         <label className="account-label" htmlFor="account-picker-trigger">当前账号</label>
         <div id="account-picker" className="account-picker">
           <select id="account" hidden aria-hidden="true" tabIndex={-1} />
-          <Button id="account-picker-trigger" type="button" variant="outline" className="w-full min-w-0 justify-start font-normal" aria-haspopup="listbox" aria-controls="account-picker-list" aria-expanded="false" title="选择账号并查看状态">
-            <span id="account-picker-title" className="min-w-0 flex-1 truncate text-left">选择账号</span>
+          <Button id="account-picker-trigger" type="button" variant="outline" className="account-identity-trigger w-full min-w-0 justify-start font-normal" aria-haspopup="listbox" aria-controls="account-picker-list" aria-expanded="false" title="选择账号并查看状态">
+            <span className="account-identity">
+              <span id="account-channel" hidden />
+              <span id="account-world" hidden />
+              <span id="account-picker-title">选择账号</span>
+              <span id="account-role-stats" hidden>Lv.<strong id="account-level">—</strong><span className="account-power">战力 <strong id="account-power">—</strong></span></span>
+            </span>
             <Badge id="account-picker-status" className="chip rounded-md" variant="outline">未连接</Badge>
             <ChevronDown className="size-4 shrink-0 opacity-50" aria-hidden="true" />
           </Button>
@@ -42,7 +49,7 @@ export function chrome() {
         </div>
         <Button id="connect" size="sm">连接</Button>
         <div className="hosting-controls">
-          <label className="hosting-interval" htmlFor="loop-every"><span className="hosting-interval-label">间隔</span><Input id="loop-every" className="h-8 w-20" type="number" min="1" max="86400" step="1" required defaultValue="60" disabled aria-label="挂机间隔（秒）" aria-describedby="loop-interval-status" title="挂机间隔（秒），按账号自动保存，下一轮使用新间隔" /><span>秒</span></label>
+          <div className="hosting-interval"><label className="hosting-interval-label" htmlFor="loop-every">间隔</label><Input id="loop-every" className="h-8 w-20" type="number" min="1" max="86400" step="1" required defaultValue="60" disabled aria-label="挂机间隔（秒）" aria-describedby="loop-interval-status" title="挂机间隔（秒），按账号自动保存，下一轮使用新间隔" /><span>秒</span><HelpTip title="挂机间隔">每轮挂机检查结束后，等待设定的秒数再开始下一轮。例如设为 60 秒，代表一轮结束后等约 60 秒再检查。间隔按当前游戏账号自动保存。</HelpTip></div>
           <Button id="loop-toggle" size="sm" variant="outline" disabled title="按已保存的任务持续挂机，直到手动暂停">开始挂机</Button>
           <Button id="account-pause" size="sm" variant="outline" disabled title="按已保存的任务开始持续托管">开始托管</Button>
           <Button id="logs-open" size="sm" variant="outline" aria-haspopup="dialog" aria-controls="journal-dialog"><ScrollText aria-hidden="true" />日志 <span id="log-top-count">0</span></Button>
@@ -60,6 +67,12 @@ export function chrome() {
             </Button>)}
           </div>
         </div>
+      </div>
+      <div className="account-metrics" aria-label="当前角色信息">
+        <span><Coins aria-hidden="true" />金币 <strong id="account-gold">—</strong></span>
+        <span><Gem aria-hidden="true" />钻石 <strong id="account-ruby">—</strong></span>
+        <button id="account-balance-refresh" type="button" aria-label="刷新余额" title="刷新金币和钻石" disabled><RefreshCw aria-hidden="true" />刷新</button>
+        <span id="account-balance-feedback" className="sr-only" role="status" />
       </div>
     </div>
     <nav id="tabs" aria-label="功能导航">{tabs.map(([key, title, short, Icon]) =>

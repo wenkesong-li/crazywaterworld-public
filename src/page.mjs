@@ -5,6 +5,14 @@ import { LOG_CATEGORIES, LOG_GROUPS, LOG_GROUP_TONES } from './log-categories.mj
 import { createLogAccountLabels } from './log-accounts.mjs';
 import { chrome, journal, dialogs, templates, giftCodesPage, overviewPage, manualPage, inventoryPage, heroesPage, lineupsPage, guildPage, activitiesPage, accountPage, stagePanel, settingsPage } from './ui/dist/console.mjs';
 const componentCss = readFileSync(new URL('./ui/dist/theme.css', import.meta.url), 'utf8');
+const consoleTabsCss = readFileSync(new URL('./custom/console-tabs.css', import.meta.url), 'utf8');
+const settingsHistoryScript = readFileSync(new URL('./custom/settings-history-ui.js', import.meta.url), 'utf8');
+const settingsHistoryCss = readFileSync(new URL('./custom/settings-history.css', import.meta.url), 'utf8');
+const settingsEnableAllScript = readFileSync(new URL('./custom/settings-enable-all.js', import.meta.url), 'utf8');
+const settingsTabsCss = readFileSync(new URL('./custom/settings-tabs.css', import.meta.url), 'utf8');
+const bagCss = readFileSync(new URL('./custom/bag.css', import.meta.url), 'utf8');
+const bagScript = readFileSync(new URL('./custom/bag-ui.js', import.meta.url), 'utf8');
+const giftLibraryCss = readFileSync(new URL('./custom/gift-code-library.css', import.meta.url), 'utf8');
 const consoleCss = readFileSync(new URL('./console.css', import.meta.url), 'utf8');
 const progressionScript = readFileSync(new URL('./ui/progression.js', import.meta.url), 'utf8');
 const lineupScript = readFileSync(new URL('./lineup-editor.js', import.meta.url), 'utf8');
@@ -44,12 +52,13 @@ export const PAGE = `<!doctype html>
 <meta name="format-detection" content="telephone=no">
 <script id="theme-init">${themeScript}</script>
 <style>@layer properties, theme, base, components, page, utilities; @layer page { ${consoleCss} ${settingsCss} ${appointmentsCss} ${lineupCss} ${siliconOverviewCss} ${resourceFieldsCss} } ${componentCss}</style>
+<style>${settingsTabsCss} ${settingsHistoryCss} ${bagCss} ${giftLibraryCss} ${consoleTabsCss}</style>
 </head>
 <body>
 ${chrome()}
 <div class="deck"><main>
   <nav id="resource-tabs" class="resource-tabs" aria-label="杂项分类" hidden>
-    <button type="button" data-resource-tab="guild">联盟</button><button type="button" data-resource-tab="inventory">仓库</button><button type="button" data-resource-tab="heroes">英雄与装备</button><button type="button" data-resource-tab="giftcodes">礼包兑换</button>
+    <button type="button" data-resource-tab="guild">联盟</button><button type="button" data-resource-tab="heroes">英雄与装备</button><button type="button" data-resource-tab="giftcodes">礼包兑换</button>
   </nav>
   <section id="tab-overview">
     ${overviewPage()}
@@ -187,10 +196,12 @@ function fmt(v) {
   return n.toLocaleString('zh-CN');
 }
 
-function when(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return d.toLocaleString('zh-CN', { hour12: false });
+function when(value) {
+  if (!value) return '';
+  const timestamp = typeof value === 'number' || /^[0-9]+$/.test(value) ? Number(value) : null;
+  if (timestamp !== null && (!Number.isFinite(timestamp) || timestamp <= 0)) return '';
+  const date = new Date(timestamp === null ? value : timestamp < 1e11 ? timestamp * 1000 : timestamp);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('zh-CN', { hour12: false });
 }
 
 let callsInFlight = 0, callProgressTimer = 0;
@@ -835,6 +846,7 @@ function selectLoadedAccount(next) {
   renderAccountSelect();
   refreshProgression();
   void refreshSavedLineups();
+  refreshBag();
   refreshManualWorld();
   refreshActivities();
   refreshStages();
@@ -1214,7 +1226,10 @@ async function refreshLoop() {
   loopReads++;
   try {
     const data = await call('/api/loop');
-    if (account === current && version === loopVersion) renderLoop(data);
+    if (account === current && version === loopVersion) {
+      renderLoop(data);
+      void refreshAccountMetrics();
+    }
   } catch {
     /* call 已记录错误 */
   } finally {
@@ -1591,6 +1606,7 @@ function refreshManualWorld(force = false) {
   if (!available || worldRead?.account === account) return;
   const version = ++worldVersion;
   worldRead = { account, version };
+  $('inventory-status').textContent = '正在读取库存';
   $('world-view').textContent = '正在读取海面数据…';
   call('/api/world').then(data => {
     if (version === worldVersion && current === account) renderWorld(data);
@@ -2134,8 +2150,11 @@ ${worldMapScript}
 ${siliconOverviewScript}
 ${resourceFieldsScript}
 ${inventoryScript}
+${bagScript}
 ${productionPlanningScript}
 ${settingsScript}
+${settingsEnableAllScript}
+${settingsHistoryScript}
 ${appointmentsScript}
 ${giftCodeScript}
 window.addEventListener('beforeunload', event => {
@@ -2176,7 +2195,7 @@ function activateConsolePage(button, resource = selectedResource) {
     }
     refreshProgression();
     if (button.dataset.tab === 'overview') {refreshOverview();refreshLoop();}
-    if(isResource&&resource==='inventory')refreshManualWorld();
+    if (target === 'inventory') refreshBag();
     if (target === 'heroes') void appointmentsLoad(true);
     if (target === 'lineups') void refreshSavedLineups();
     if (button.dataset.tab === 'account') {
@@ -2214,6 +2233,7 @@ async function boot() {
   const savedView = history.state?.consoleView;
   const initialTab = location.hash.startsWith('#config-group-') ? 'settings'
     : location.hash === '#pirate-first-kill' ? 'stages' : location.hash === '#journal' ? 'overview'
+    : savedView?.tab === 'resources' && savedView.resource === 'inventory' ? 'inventory'
     : savedView?.tab === 'login-settings' ? 'account'
     : savedView?.tab === 'resources' && savedView.resource === 'activities' ? 'activities' : savedView?.tab;
   const button = [...document.querySelectorAll('#tabs button')].find(tab => tab.dataset.tab === initialTab)
