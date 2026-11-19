@@ -1,13 +1,10 @@
 async function initReleaseNotes() {
-  const entry = document.getElementById('release-notes-open');
-  if (!entry) return;
-
+  if (!consoleIdentity) return;
   const dialog = document.createElement('dialog');
   dialog.id = 'release-notes-dialog';
   dialog.setAttribute('aria-labelledby', 'release-notes-title');
   const heading = document.createElement('h2');
   heading.id = 'release-notes-title';
-  heading.textContent = '更新记录';
   const content = document.createElement('div');
   content.className = 'release-notes-content';
   const message = document.createElement('p');
@@ -24,22 +21,26 @@ async function initReleaseNotes() {
   footer.append(historyButton, closeButton);
   dialog.append(heading, content, message, footer);
   document.body.append(dialog);
-
+  const entry = document.createElement('button');
+  entry.id = 'release-notes-open';
+  entry.type = 'button';
+  entry.textContent = '更新记录';
+  entry.setAttribute('aria-haspopup', 'dialog');
+  entry.setAttribute('aria-controls', dialog.id);
+  document.querySelector('.account-page-actions').prepend(entry);
   let data = null;
   let saving = false;
-
-  function render(latestOnly) {
+  const render = latestOnly => {
     heading.textContent = latestOnly ? '本次更新' : '更新记录';
     content.replaceChildren();
     historyButton.hidden = !latestOnly;
-    if (!data) return;
-    for (const release of latestOnly ? data.entries.slice(0, 1) : data.entries) {
+    for (const release of latestOnly ? data.releases.slice(0, 1) : data.releases) {
       const article = document.createElement('article');
       const title = document.createElement('h3');
-      title.textContent = release.id;
+      title.textContent = release.title;
       const meta = document.createElement('p');
       meta.className = 'release-notes-meta';
-      meta.textContent = data.source === 'upstream' ? '来自上游仓库' : '来自本地文件';
+      meta.textContent = release.date + ' · ' + release.version + ' · 作者：' + release.author;
       const list = document.createElement('ul');
       for (const item of release.items) {
         const row = document.createElement('li');
@@ -49,8 +50,7 @@ async function initReleaseNotes() {
       article.append(title, meta, list);
       content.append(article);
     }
-  }
-
+  };
   const load = async () => { data = await call('/api/updates'); };
   const close = async () => {
     if (saving) return;
@@ -59,7 +59,7 @@ async function initReleaseNotes() {
     message.textContent = '';
     try {
       if (data?.unread) {
-        await call('/api/updates/read', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: data.latestId }) });
+        await call('/api/updates/read', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ version: data.latestVersion }) });
         data.unread = false;
       }
       dialog.close();
@@ -70,7 +70,6 @@ async function initReleaseNotes() {
       closeButton.disabled = false;
     }
   };
-
   closeButton.onclick = () => { void close(); };
   dialog.oncancel = event => { event.preventDefault(); void close(); };
   historyButton.onclick = () => render(false);
@@ -84,8 +83,6 @@ async function initReleaseNotes() {
     } catch (error) { reportError(error); }
     finally { entry.disabled = false; }
   };
-
-  // 打开控制台时若有未读的最新更新，自动展示一次。
   try {
     await load();
     if (data.unread && !document.querySelector('dialog[open]')) {

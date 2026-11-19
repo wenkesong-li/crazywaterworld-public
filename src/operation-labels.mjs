@@ -1,7 +1,5 @@
 // Operation names shared by the server journal and the browser's network errors.
 export const operationLabels = {
-  '/api/update/check': '检查更新', '/api/update/apply': '应用更新', '/api/update/progress': '查看更新进度',
-  '/api/updates': '查看更新记录', '/api/updates/read': '标记更新已读',
   '/api/world/production-plan': '计算订单联合排产',
   '/api/world/fleet-speed/preview': '核对舰队加速费用',
   '/api/world/fleet-speed/action': '加速舰队至完成',

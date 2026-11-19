@@ -10,7 +10,7 @@ const VERIFICATION_TIMEOUT_MS = 10 * 60_000;
 const EXCHANGE_TIMEOUT_MS = 3 * 60_000;
 const CAPTURED_TIMEOUT_MS = 10 * 60_000;
 const VERIFY_PHONE = '请用抖音扫描上方验证二维码，并在手机完成官方身份验证。';
-const VERIFY_WEB = '抖音要求额外安全验证，请按官方提示完成验证；若没有可扫描的验证二维码，可稍后重试。';
+const VERIFY_WEB = '抖音要求额外安全验证，请按官方提示完成验证；若没有可扫描的验证二维码，可稍后重试或从电脑抖音读取账号。';
 const VERIFY_WINDOW = '抖音官网要求页面验证。请在已打开的临时抖音官方窗口完成验证，完成后这里会继续显示登录二维码。';
 
 function officialPage(url) {
@@ -273,7 +273,7 @@ export function createDouyinLogin({
       }
       if (found.challenge) {
         if (headless) {
-          finish(session, 'error', '抖音官网要求人工页面验证，当前无头浏览器无法完成。请在有桌面的 Windows 中扫码重试。');
+          finish(session, 'error', '抖音官网要求人工页面验证，当前无头浏览器无法完成。请在有桌面的 Windows 中扫码，或从电脑抖音读取账号。');
           return;
         }
         if (session.phase !== 'verifying') deadline(session, now() + verificationTimeoutMs, 'expired', '抖音官网页面验证已超时，请重新生成二维码。');

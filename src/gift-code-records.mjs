@@ -26,6 +26,6 @@ export function giftRecordsCsv(rows, status) {
     if (/^[\s]*[=+\-@]/.test(text) || /^[\t\r\n]/.test(text)) text = "'" + text;
     return '"' + text.replaceAll('"','""') + '"';
   };
-  return '\uFEFF' + [['礼包码','状态','结果','时间'],...filterGiftRecords(rows,status).map(row => [row.code,giftRecordLabels[row.status] || row.status,row.detail,row.at])]
+  return '\uFEFF' + [['礼包码','渠道','兑换方式','状态','结果','时间'],...filterGiftRecords(rows,status).map(row => [row.code,row.channels?.join('、') || '未记录',row.automatic === true ? '自动' : row.automatic === false ? '手动' : '未记录',giftRecordLabels[row.status] || row.status,row.detail,row.at])]
     .map(row => row.map(cell).join(',')).join('\r\n') + '\r\n';
 }

@@ -636,6 +636,11 @@ function configCompatibilityMessage(data) {
 function configBusy(value) {
   configEditor.busy = value;
   for (const id of ['config-retry', 'config-import', 'config-export', 'config-preview']) $(id).disabled = value || configEditor.loading || !configEditor.draft;
+  for (const id of ['config-history-save', 'config-history-open']) {
+    $(id).disabled = value || configEditor.loading || !configEditor.draft || configEditor.recoveryBlocked || configPageStale();
+  }
+  $('config-enable-all').disabled = value || configEditor.loading || !configEditor.draft
+    || configEditor.recoveryBlocked || configPageStale();
   if (configEditor.recoveryBlocked) $('config-import').disabled = true;
   if (configPageStale()) {
     for (const id of ['config-retry', 'config-import', 'config-preview']) $(id).disabled = true;
@@ -1388,7 +1393,6 @@ async function configLoad(force = false) {
     configEditor.owner = account; configEditor.data = data; configEditor.draft = structuredClone(data.settings); configEditor.baseline = structuredClone(data.settings); configEditor.errors = {}; configEditor.recoveryBlocked = data.recovery?.reason === 'unavailable'; configEditor.recoveryNotice = null;
     configCancelSaveTimer(); configEditor.saveError = null; configEditor.saveRetries = 0;
     configEditor.playerData = null; configEditor.playerRequest = null; configEditor.playerError = '';
-    $('config-account-name').textContent = (accounts.find(row => row.id === account)?.title || '当前账号') + '的挂机配置';
     configRender(); configCompatibilityMessage(data);
     return data;
   } catch (error) { if (account === current && version === configEditor.serial) configMessage(error.message, 'error'); }

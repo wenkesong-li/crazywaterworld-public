@@ -66,8 +66,16 @@ export function startGiftCodes(id,input,dispatch,shared={stop:''},options={}) {
   if(options.retry===true && (parsedCodes.length!==1 || !canRetryGiftCode(history,parsedCodes[0])))throw Error('该记录不允许重试，请刷新记录');
   const codes=parsedCodes.filter(code=>(!previous.has(code)||options.retry===true)&&!publicGiftCodes.isExpired(code));
   if(!codes.length)throw Error('该账号没有新的礼包码，已有兑换历史和已过期的码均已过滤');
-  const expiration=new Map(publicGiftCodes.entries(id).map(row=>[row.code,row.expiresAt]));
-  const rows=codes.map(code=>({batch,code,expiresAt:expiration.get(code)??null,automatic:options.automatic===true,at:time,status:'queued',detail:'等待兑换'}));
+  const catalog = new Map(publicGiftCodes.entries(id).map(row => [row.code, row]));
+  const channelNames = new Map(publicGiftCodes.channels().map(channel => [channel.id, channel.name]));
+  const rows = codes.map(code => {
+    const entry = catalog.get(code);
+    const channels = entry?.sourceDetails?.map(source => source.name)
+      ?? (entry?.sources ?? (entry && !entry.manual ? ['ali213'] : [])).map(source => channelNames.get(source) ?? source);
+    if (!channels.length && entry?.manual) channels.push(entry.shared ? '共享添加' : '个人添加');
+    return { batch, code, expiresAt: entry?.expiresAt ?? null, channels, automatic: options.automatic === true,
+      at: time, status: 'queued', detail: '等待兑换' };
+  });
   const job={rows:[...rows,...history]};store(id,job.rows);active.set(id,job);
   async function run(){
     let stop='';
@@ -89,11 +97,16 @@ export function startGiftCodes(id,input,dispatch,shared={stop:''},options={}) {
           try {
             const reply=rewardData(await client.request('GotGiftCodeRequest',{giftCode:r.code},'GotRewardResponse',8000));
             if(!hasReward(reply))throw Error('未取得可核对的奖励明细');
-            const rewards=(reply.reward?.asset??[]).map(a=>a.id+' ×'+a.num);
+            const resources = { GOLD: '金币', RUBY: '钻石', EXP: '经验' };
+            const rewards = (reply.reward?.asset ?? [])
+              .filter(asset => typeof asset.id === 'string' && Number(asset.num) > 0)
+              .map(asset => (Object.hasOwn(resources, asset.id) ? resources[asset.id] : asset.id) + ' ×' + asset.num);
             for(const [k,label] of Object.entries({hero:'英雄',antique:'藏品',equipIds:'装备',badge:'徽章',tickets:'券',supply:'补给'})){
               if(reply[k]?.length)rewards.push(label+' ×'+reply[k].length);
             }
             Object.assign(r,{status:'success',detail:rewards.join('、')});
+            try { publicGiftCodes.rememberReward(r.code, r.detail); }
+            catch { /* A catalog write failure must not turn confirmed redemption into an unknown result. */ }
           }catch(error){
             const name=client.promptNames?.[error.prompt?.prompt];
             if(error.prompt && error.request==='GotGiftCodeRequest'){

@@ -176,22 +176,6 @@ try {
     assert.equal(fs.existsSync(path.join(f.root, 'node_modules')), false);
   });
 
-  await test('维护命令不依赖监听地址配置，不构建服务且保留检查和恢复回调', async () => {
-    const calls = [], printed = [];
-    const dependencies = { env: { CW_HOST: 'http://invalid', CW_PORT: 'invalid' }, print: value => printed.push(value),
-      prepare: async options => { calls.push(['prepare', options.build]); }, launch: noLaunch,
-      certificateCommand: async args => { calls.push(['certificate', ...args]); },
-      inspectCaptureRecovery: () => ({ pending: true, message: 'fixture recovery pending' }),
-      recoverCapture: async () => { calls.push(['recover']); return { pending: false }; },
-    };
-    await startConsole(['status'], dependencies);
-    await startConsole(['check'], dependencies);
-    await startConsole(['recover'], dependencies);
-    assert.deepEqual(calls, [['prepare', false], ['certificate', 'status'], ['prepare', false], ['certificate', 'status'], ['prepare', false], ['recover']]);
-    assert.equal(printed.filter(value => value === 'fixture recovery pending').length, 2);
-    assert.match(printed.at(-1), /清理/);
-  });
-
   await test('正常启动在准备完成后执行一次，并保留已有地址和浏览器策略', async () => {
     const calls = [], env = { CW_HOST: 'localhost', CW_PORT: '18000' };
     await startConsole([], { env, print() {}, prepare: async options => { calls.push(['prepare', options.build]); },

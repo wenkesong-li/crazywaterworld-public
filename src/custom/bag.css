@@ -1,0 +1,53 @@
+.account-metrics { display:flex; align-items:center; flex-wrap:wrap; gap:4px 10px; margin-top:5px; padding:2px 7px; width:fit-content; max-width:100%; border-radius:8px; background:var(--muted); font-size:12px; font-variant-numeric:tabular-nums }
+.account-metrics > span:not(.sr-only) { display:inline-flex; align-items:center; gap:5px; color:var(--muted-foreground) }
+.account-metrics strong { color:var(--foreground); font-weight:650 }
+.account-metrics svg { width:14px; height:14px; flex:none }
+.account-metrics > span:nth-child(1) svg { color:#ac790a }
+.account-metrics > span:nth-child(2) svg { color:#3895bb }
+#account-balance-refresh { display:inline-flex; align-items:center; gap:4px; min-height:30px; padding:0 7px; border-radius:5px; color:var(--foreground) }
+#account-balance-refresh:hover:not(:disabled) { background:var(--background) }
+#account-balance-refresh:disabled { opacity:.5 }
+#account-balance-refresh[aria-busy="true"] svg { animation:balance-spin .8s linear infinite }
+@keyframes balance-spin { to { transform:rotate(360deg) } }
+@media (prefers-reduced-motion:reduce) { #account-balance-refresh[aria-busy="true"] svg { animation:none } }
+@media (max-width:768px) { #account-balance-refresh { min-height:44px } }
+.bag-tabs { display:flex; gap:8px; margin-bottom:16px }
+.bag-tabs [aria-pressed="true"] { background:var(--primary); color:var(--primary-foreground); border-color:var(--primary) }
+.bag-antique-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); gap:12px; margin-top:12px }
+.bag-antique-group { min-width:0; padding:12px; border:1px solid var(--border); border-radius:10px }
+.bag-antique-group h3 { margin:0 0 8px; font-weight:600 }
+.bag-antique-row { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:7px 0; border-top:1px solid var(--border) }
+.bag-antique-detail { flex:none; color:var(--muted-foreground); font-size:12px }
+
+.account-identity { display:flex; flex:1; align-items:baseline; min-width:0; gap:7px; text-align:left; font-size:12px }
+.account-identity > span:not([hidden]) { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+.account-identity #account-picker-title { font-weight:650 }
+.account-identity #account-role-stats { flex:none; color:var(--muted-foreground) }
+.account-power { margin-inline-start:7px }
+@media (min-width:769px) {
+  .account-picker { width: min(470px, 43vw); flex-basis:470px }
+}
+@media (max-width:768px) {
+  .account-identity-trigger { height:auto; min-height:36px; padding-block:7px }
+  .account-identity { flex-wrap:wrap; gap:3px 7px }
+  .account-identity #account-role-stats { flex-basis:100% }
+}
+.bag-hero-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr)); gap:8px; margin-top:12px }
+.bag-hero-grid > .cell { min-width:0; padding:8px; border:1px solid var(--border); border-radius:8px }
+.bag-search { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-block:12px 6px }
+.bag-search input { width:min(100%,280px) }
+#tab-inventory [data-bag-name][hidden] { display:none }
+
+/* Balances occupy their own row rather than changing the height of the account picker. */
+.headline > .account-metrics { margin:0 auto; justify-content:center; box-shadow:0 0 0 1px var(--border) inset }
+@media (min-width:769px) {
+  .headline > .account-metrics { flex:none }
+  .headline::after { content:""; flex-basis:100%; order:1; height:0; margin-top:-12px }
+  .headline > .account-metrics { order:2 }
+}
+@media (max-width:768px) {
+  .headline > .account-metrics { grid-column:1 / -1; grid-row:3; justify-self:center }
+  .headline .hosting-controls { grid-row:4 }
+  .headline #connect { grid-row:5 }
+  .headline #hint { grid-row:6 }
+}

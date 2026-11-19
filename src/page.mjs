@@ -5,10 +5,17 @@ import { LOG_CATEGORIES, LOG_GROUPS, LOG_GROUP_TONES } from './log-categories.mj
 import { createLogAccountLabels } from './log-accounts.mjs';
 import { chrome, journal, dialogs, templates, giftCodesPage, overviewPage, manualPage, inventoryPage, heroesPage, lineupsPage, guildPage, activitiesPage, accountPage, stagePanel, settingsPage } from './ui/dist/console.mjs';
 const componentCss = readFileSync(new URL('./ui/dist/theme.css', import.meta.url), 'utf8');
+const consoleTabsCss = readFileSync(new URL('./custom/console-tabs.css', import.meta.url), 'utf8');
+const settingsHistoryScript = readFileSync(new URL('./custom/settings-history-ui.js', import.meta.url), 'utf8');
+const settingsHistoryCss = readFileSync(new URL('./custom/settings-history.css', import.meta.url), 'utf8');
+const settingsEnableAllScript = readFileSync(new URL('./custom/settings-enable-all.js', import.meta.url), 'utf8');
+const settingsTabsCss = readFileSync(new URL('./custom/settings-tabs.css', import.meta.url), 'utf8');
+const bagCss = readFileSync(new URL('./custom/bag.css', import.meta.url), 'utf8');
+const bagScript = readFileSync(new URL('./custom/bag-ui.js', import.meta.url), 'utf8');
 const consoleOverridesCss = readFileSync(new URL('./custom/console-overrides.css', import.meta.url), 'utf8');
+const releaseNotesCss = readFileSync(new URL('./custom/release-notes.css', import.meta.url), 'utf8');
 const giftLibraryCss = readFileSync(new URL('./custom/gift-code-library.css', import.meta.url), 'utf8');
 const wechatLoginCss = readFileSync(new URL('./custom/wechat-login.css', import.meta.url), 'utf8');
-const updateScript = readFileSync(new URL('./custom/update-ui.js', import.meta.url), 'utf8');
 const releaseNotesScript = readFileSync(new URL('./custom/release-notes-ui.js', import.meta.url), 'utf8');
 const consoleCss = readFileSync(new URL('./console.css', import.meta.url), 'utf8');
 const progressionScript = readFileSync(new URL('./ui/progression.js', import.meta.url), 'utf8');
@@ -30,6 +37,7 @@ const phoneLoginScript = readFileSync(new URL('./phone-login-ui.js', import.meta
 const alipayLoginScript = readFileSync(new URL('./alipay-login-ui.js', import.meta.url), 'utf8');
 const douyinLoginScript = readFileSync(new URL('./douyin-login-ui.js', import.meta.url), 'utf8');
 const wechatLoginScript = readFileSync(new URL('./custom/wechat-login-ui.js', import.meta.url), 'utf8');
+const consoleUsersScript = readFileSync(new URL('./console-users-ui.js', import.meta.url), 'utf8');
 const accountAddScript = readFileSync(new URL('./account-add-ui.js', import.meta.url), 'utf8');
 const accountBackupScript = readFileSync(new URL('./account-backup-ui.js', import.meta.url), 'utf8');
 const accountPickerScript = readFileSync(new URL('./account-picker-ui.js', import.meta.url), 'utf8');
@@ -50,13 +58,13 @@ export const PAGE = `<!doctype html>
 <meta name="format-detection" content="telephone=no">
 <script id="theme-init">${themeScript}</script>
 <style>@layer properties, theme, base, components, page, utilities; @layer page { ${consoleCss} ${settingsCss} ${appointmentsCss} ${lineupCss} ${siliconOverviewCss} ${resourceFieldsCss} } ${componentCss}</style>
-<style>${consoleOverridesCss} ${giftLibraryCss} ${wechatLoginCss}</style>
+<style>${consoleOverridesCss} ${settingsTabsCss} ${settingsHistoryCss} ${bagCss} ${releaseNotesCss} ${giftLibraryCss} ${wechatLoginCss} ${consoleTabsCss}</style>
 </head>
 <body>
 ${chrome()}
 <div class="deck"><main>
   <nav id="resource-tabs" class="resource-tabs" aria-label="杂项分类" hidden>
-    <button type="button" data-resource-tab="guild">联盟</button><button type="button" data-resource-tab="inventory">仓库</button><button type="button" data-resource-tab="heroes">英雄与装备</button><button type="button" data-resource-tab="giftcodes">礼包兑换</button>
+    <button type="button" data-resource-tab="guild">联盟</button><button type="button" data-resource-tab="heroes">英雄与装备</button><button type="button" data-resource-tab="giftcodes">礼包兑换</button>
   </nav>
   <section id="tab-overview">
     ${overviewPage()}
@@ -230,6 +238,7 @@ async function call(path, options) {
     versionGuard.check(res);
     versionGuard.assertWritable(path, method);
     const data = await res.json();
+    if(res.status===401){stateActions.replaceAccounts([],null);document.body.inert=true;location.replace('/login');throw new Error('登录或权限已失效，请重新登录');}
     versionGuard.check(res, data);
     versionGuard.assertWritable(path, method);
     if (!res.ok) {
@@ -844,6 +853,7 @@ function selectLoadedAccount(next) {
   renderAccountSelect();
   refreshProgression();
   void refreshSavedLineups();
+  refreshBag();
   refreshManualWorld();
   refreshActivities();
   refreshStages();
@@ -1223,7 +1233,10 @@ async function refreshLoop() {
   loopReads++;
   try {
     const data = await call('/api/loop');
-    if (account === current && version === loopVersion) renderLoop(data);
+    if (account === current && version === loopVersion) {
+      renderLoop(data);
+      void refreshAccountMetrics();
+    }
   } catch {
     /* call 已记录错误 */
   } finally {
@@ -1600,6 +1613,7 @@ function refreshManualWorld(force = false) {
   if (!available || worldRead?.account === account) return;
   const version = ++worldVersion;
   worldRead = { account, version };
+  $('inventory-status').textContent = '正在读取库存';
   $('world-view').textContent = '正在读取海面数据…';
   call('/api/world').then(data => {
     if (version === worldVersion && current === account) renderWorld(data);
@@ -1790,7 +1804,7 @@ function renderAccounts() {
     if (!box.querySelector('.account-empty')) {
       clear(box);
       const empty = el('div', 'account-empty');
-      empty.append(el('h3', null, '添加第一个游戏账号'), el('p', 'dim', '点击「添加账号」登录，或通过「导入账号」恢复备份。'));
+      empty.append(el('h3', null, (typeof consoleIdentity!=='undefined'&&consoleIdentity?.role==='user')?'暂无分配的游戏账号':'添加第一个游戏账号'), el('p', 'dim', (typeof consoleIdentity!=='undefined'&&consoleIdentity?.role==='user')?'请联系管理员分配游戏账号。':'点击「添加账号」登录，或通过「导入账号」恢复备份。'));
       box.appendChild(empty);
     }
     return;
@@ -1917,7 +1931,7 @@ ${douyinLoginScript}
 
 // ---- 添加账号引导 ----------------------------------------------------------
 ${accountAddScript}
-${updateScript}
+${consoleUsersScript}
 ${releaseNotesScript}
 
 // ---- 页头账号选择 ----------------------------------------------------------
@@ -1932,8 +1946,11 @@ ${worldMapScript}
 ${siliconOverviewScript}
 ${resourceFieldsScript}
 ${inventoryScript}
+${bagScript}
 ${productionPlanningScript}
 ${settingsScript}
+${settingsEnableAllScript}
+${settingsHistoryScript}
 ${appointmentsScript}
 ${giftCodeScript}
 window.addEventListener('beforeunload', event => {
@@ -1974,7 +1991,7 @@ function activateConsolePage(button, resource = selectedResource) {
     }
     refreshProgression();
     if (button.dataset.tab === 'overview') {refreshOverview();refreshLoop();}
-    if(isResource&&resource==='inventory')refreshManualWorld();
+    if (target === 'inventory') refreshBag();
     if (target === 'heroes') void appointmentsLoad(true);
     if (target === 'lineups') void refreshSavedLineups();
     if (button.dataset.tab === 'account') {
@@ -2001,6 +2018,7 @@ new ResizeObserver(() => {
 
 async function boot() {
   try {
+    await loadConsoleIdentity();
     await loadAccounts(true);
   } catch (error) {
     $('hint').textContent = '';
@@ -2011,6 +2029,7 @@ async function boot() {
   const savedView = history.state?.consoleView;
   const initialTab = location.hash.startsWith('#config-group-') ? 'settings'
     : location.hash === '#pirate-first-kill' ? 'stages' : location.hash === '#journal' ? 'overview'
+    : savedView?.tab === 'resources' && savedView.resource === 'inventory' ? 'inventory'
     : savedView?.tab === 'login-settings' ? 'account'
     : savedView?.tab === 'resources' && savedView.resource === 'activities' ? 'activities' : savedView?.tab;
   const button = [...document.querySelectorAll('#tabs button')].find(tab => tab.dataset.tab === initialTab)
@@ -2019,7 +2038,6 @@ async function boot() {
     ? savedView.resource : selectedResource;
   activateConsolePage(button, resource);
   if (location.hash === '#journal') openJournal();
-  void initUpdate();
   void initReleaseNotes();
 }
 // Coalesce related mutations before painting every account surface. The store

@@ -1,88 +1,160 @@
-// 更新记录：自动拉取上游父库的 CHANGELOG.md 并解析为按日期倒序的条目；
-// 网络不可用时回退到本仓库自带的 CHANGELOG.md。已读状态按本机保存在 data/。
-import fs from 'node:fs';
 import path from 'node:path';
 import { atomicJson, readJson, withFileLock } from '../json-store.mjs';
 
-export const DEFAULT_CHANGELOG_URL = 'https://raw.githubusercontent.com/xutongxue233/crazywaterworld/main/CHANGELOG.md';
-const CACHE_TTL_MS = 10 * 60_000;
+export const releases = [
+  { version: '2026.11.20.12', date: '2026-11-20', title: '一键复制礼包码', author: '李大龙', items: [
+    '礼包码库、兑换记录和抓取批次详情均可点击图标复制完整礼包码。',
+  ] },
+  { version: '2026.11.20.11', date: '2026-11-20', title: '礼包码弹窗与表格优化', author: '李大龙', items: [
+    '渠道弹窗按列表和编辑状态显示操作，保存校验必填项，关闭前提醒未保存的修改。',
+    '抓取批次和详情使用卡片布局，右上角保留一个关闭按钮，长内容可展开。',
+    '加宽兑换记录的礼包码和时间列。',
+  ] },
+  { version: '2026.11.20.10', date: '2026-11-20', title: '礼包码渠道与批次详情', author: '李大龙', items: [
+    '内置渠道固定，管理员可新增和编辑自建渠道，列表展示完整网址。',
+    '抓取弹窗加宽并增加固定关闭按钮，批次详情展示所选账号的最新兑换状态。',
+    '礼包列表展示渠道与抓取方式，兑换记录和导出增加渠道列。',
+  ] },
+  { version: '2026.11.20.9', date: '2026-11-20', title: '礼包码渠道和标签样式', author: '李大龙', items: [
+    '内置游侠网和 Wiki 公共获取渠道，跨渠道去重并显示本次抓取统计。',
+    '手动和自动抓取均记入批次日志，可查看来源、到期时间和奖励内容。',
+    '成功兑换可补全公共码的未知奖励，兑换记录和导出显示手动或自动。',
+    '统一深浅主题下的标签选中样式，头部增加挂机间隔说明。',
+  ] },
+  { version: '2026.11.20.8', date: '2026-11-20', title: '挂机配置历史与恢复', author: '李大龙', items: [
+    '每个游戏账号可独立保存命名配置，查看最近 50 条历史记录。',
+    '恢复前逐项展示配置差异，可先将当前配置保存为历史草稿。',
+  ] },
+  { version: '2026.11.20.7', date: '2026-11-20', title: '逐项确认消耗开关', author: '李大龙', items: [
+    '一键开启的二次确认按原配置展示消耗类主开关和子项，新增项可逐项勾选。',
+    '未勾选的项目和缺少上级开关的子项会列出跳过原因。',
+  ] },
+  { version: '2026.11.20.6', date: '2026-11-20', title: '一键开启挂机功能', author: '李大龙', items: [
+    '逐项校验并批量开启当前账号的挂机功能，消耗类开关需二次确认。',
+    '结果弹窗分开展示开启成功和未开启的项目，派遣沿用已保存策略。',
+    '金币、钻石和刷新按钮在头部独立一行居中显示。',
+  ] },
+  { version: '2026.11.20.5', date: '2026-11-20', title: '背包搜索与余额刷新', author: '李大龙', items: [
+    '背包新增英雄标签，道具、英雄、藏品和套装均可按名称搜索。',
+    '页头余额栏支持手动刷新金币和钻石，挂机配置标题移除重复的角色信息。',
+  ] },
+  { version: '2026.11.20.4', date: '2026-11-20', title: '背包、账号信息与登录体验', author: '李大龙', items: [
+    '总览旁新增背包入口，可切换查看道具库存和藏品套装。',
+    '当前账号显示渠道、区服、角色、等级、战力和余额，手机端自动换行。',
+    '后台登录会话保留 24 小时，部署重启后仍可继续使用有效会话。',
+    '挂机配置的分类标签增加边框和更明显的选中样式。',
+  ] },
+  { version: '2026.11.20.3', date: '2026-11-20', title: '切换微信原生扫码', author: '李大龙', items: [
+    '微信登录改用上游的 Node.js 原生扫码方式，保留后台用户隔离和扫码后选择角色。',
+  ] },
+  { version: '2026.11.20.2', date: '2026-11-20', title: '批量新增共享礼包码', author: '李大龙', items: [
+    '管理员可按行粘贴礼包码批量新增，统一设置到期日期。',
+    '没有绑定游戏账号也可载入公共码库。共享码按游戏账号分别过滤兑换历史，原有个人码保留归属。',
+  ] },
+  { version: '2026.11.20.1', date: '2026-11-20', title: '城池、舰队与资源田更新', author: '李大龙', items: [
+    '优化城池和舰队详情，支持手动加速至完成，修复城池操作加载时滚动条闪现。',
+    '资源田列表显示所属城市，建筑一览调整海面布局。',
+  ] },
+  { version: '2026.11.19.4', date: '2026-11-19', title: '同步主线功能更新', author: '李大龙', items: [
+    '合入城池派遣、联盟宣战、集结、防守和募兵操作，以及资源田自动分配与高级田替换优化。',
+    '修复雷达空闲舰队核对、城战多盟同攻判断、生产排程和挂机配置兼容问题。',
+    '优化海面建筑一览、联盟科技和页面更新提示，完善跨平台启动与控制台地址处理。',
+    '保留微信扫码、后台用户权限与游戏账号共享分配，以及按游戏账号隔离的礼包码和兑换历史。',
+  ] },
+  { version: '2026.11.19.3', date: '2026-11-19', title: '微信扫码登录', author: '李大龙', items: [
+    '添加账号支持获取微信登录二维码，手机扫码授权后读取游戏角色，选择角色后保存。',
+    '微信扫码授权服务在服务器按需启动，无需用户安装证书、代理或采集EXE；二维码会话按后台用户隔离。',
+    '取消、刷新和超时会清理临时登录结果，新游戏账号仍默认不挂机。',
+  ] },
+  { version: '2026.11.19.2', date: '2026-11-19', title: '移除本机抓包功能', author: '李大龙', items: [
+    '移除微信、抖音本机代理抓包入口及证书安装、系统代理修改和恢复接口。',
+    '移除Windows采集EXE、原生源码、采集脚本及下载接口；保留支付宝扫码、APP登录、账号导入及已有账号数据。',
+  ] },
+  { version: '2026.11.19.1', date: '2026-11-19', title: '礼包记录重试与登录时长', author: '李大龙', items: [
+    '兑换记录增加可手动重试筛选和逐条重试按钮，支持限频或未识别提示码的明确拒绝，保留原始记录。',
+    '重试前重新检查账号权限、完整兑换历史和过期状态，成功、已兑换及结果待确认的码禁止重发；导出沿用当前筛选。',
+    '后台登录有效期调整为24小时，重新登录后生效。',
+  ] },
+  { version: '2026.11.18.7', date: '2026-11-18', title: '公共礼包码库与自动兑换', author: '李大龙', items: [
+    '每天早上8点检查同步指定网站的礼包码；点击载入会立即检查当天缓存，当天已成功抓取则不重复访问网站。',
+    '礼包码改为表格展示可用状态、使用状态和到期日期，支持为所选游戏账号新增个人礼包码行。',
+    '取消100条分批限制，新账号也可一次载入公共库中所有历史未到期码。',
+    '按每个游戏账号的兑换历史过滤已兑换、已处理和待确认的码，过滤发生在展示和创建发送队列之前。',
+    '每个游戏账号可独立开启自动兑换历史和新码，默认关闭；暂停、关闭或限频后保留未发送的剩余任务。',
+    '根据来源到期日期移除过期码；任一账号收到明确过期反馈后全局下架，并防止下次抓取重新加入。',
+  ] },
+  { version: '2026.11.18.6', date: '2026-11-18', title: 'Windows 独立微信采集助手', author: '李大龙', items: [
+    '提供 Windows 64 位独立 EXE，内置 SSL/TLS 和证书生成，无需安装 Node.js、Python 或 OpenSSL。',
+    '启动检测本机证书，支持一键安装当前用户证书、自动展示证书及选择目录另存公开证书。',
+    '支持本机微信登录包采集、导出控制台兼容的账号 JSON，以及停止、超时或退出后的代理恢复。',
+    'Windows 证书安装和微信实抓仍需真机验证，可继续使用已有脚本版采集助手。',
+  ] },
+  { version: '2026.11.18.5', date: '2026-11-18', title: '更新记录与版本提醒', author: '李大龙', items: [
+    '增加更新记录入口，可查看每次更新的功能、日期和作者。',
+    '登录后自动展示最新版本的更新内容；关闭后按后台用户保存已读状态，同一版本不再提示。',
+  ] },
+  { version: '2026.11.18.4', date: '2026-11-18', title: '城战加速条件提示', author: '李大龙', items: [
+    '明确维修及派遣钻石加速的总开关、逐队开关和预算生效条件。',
+    '逐队展示加速未生效的原因，支持直接跳转到需要调整的设置。',
+  ] },
+  { version: '2026.11.18.3', date: '2026-11-18', title: '账号登录设置与玩法更新', author: '李大龙', items: [
+    '账号卡片增加独立登录设置，可为不同游戏账号配置自动重连策略。',
+    '活动独立为顶级标签，其余功能归并到杂项；调整限时活动、海上风采大赛和任务领奖的配置入口。',
+    '合并海盗扫荡与讨伐配置入口，移除旧联盟订单的重复入口。',
+    '世界首领支持多舰队共同出战、临时使用预设阵容，并在返航后恢复原阵容。',
+    '英雄技能展示领奖覆盖全部已拥有英雄。',
+  ] },
+  { version: '2026.11.18.2', date: '2026-11-18', title: '自动化与活动体验更新', author: '李大龙', items: [
+    '装备锻造支持独立领取及游戏原生自动锻造模式。',
+    '完善博物馆自动探宝、推荐选队和自动陈列，并兼容旧配置迁移。',
+    '优化活动页渐进加载和重复查询，调整挂机配置分组与折叠交互。',
+    '联盟商船结算前十分钟停止上船及备料。',
+    '调整钻石消耗提示，移除旧汽油限制和城战加速合计上限，保留各项有效预算约束。',
+  ] },
+  { version: '2026.11.18.1', date: '2026-11-18', title: '后台用户管理与界面优化', author: '李大龙', items: [
+    '管理员可创建、停用、删除后台用户，重置密码，并分配游戏账号。',
+    '同一游戏账号可共享给多个后台用户，普通用户仅能查看和操作获分配的账号。',
+    '优化控制台、登录页及后台用户管理界面，兼容手机浏览器。',
+    '定制样式单独维护，减少后续同步主线时的合并冲突。',
+  ] },
+  { version: '2026.11.18.0', date: '2026-11-18', title: '礼包记录与本机微信采集', author: '李大龙', items: [
+    '礼包兑换记录支持选择每页条数、按状态筛选及 CSV 导出，导出遵循当前筛选条件。',
+    '增加 macOS 和 Windows 本机微信登录采集工具，采集后可将游戏账号导入服务器控制台。',
+  ] },
+  { version: '2026.11.17.1', date: '2026-11-17', title: '登录鉴权与手机支持', author: '李大龙', items: [
+    '控制台增加后台登录鉴权，登录后方可访问页面、接口和实时日志。',
+    '支持多游戏账号独立管理和挂机，提供支付宝扫码、手机号及电脑微信采集入口。',
+    '适配手机浏览器及支付宝登录跳转，中文密码可切换显示后输入。',
+  ] },
+];
 
-export function parseChangelog(text) {
-  const entries = [];
-  const lines = String(text ?? '').split(/\r?\n/);
-  let current = null;
-  for (const line of lines) {
-    const heading = /^##\s+(\d{4}-\d{2}-\d{2})\b/.exec(line);
-    if (heading) {
-      if (current) entries.push(current);
-      current = { id: heading[1], items: [] };
-      continue;
-    }
-    // 非日期的二级标题（如“说明”）结束当前节点，其内容不并入日期条目。
-    if (/^##\s/.test(line)) {
-      if (current) entries.push(current);
-      current = null;
-      continue;
-    }
-    if (!current) continue;
-    const item = /^[-*]\s+(.+)$/.exec(line.trim());
-    if (item) current.items.push(item[1].trim());
-  }
-  if (current) entries.push(current);
-  return entries.filter(entry => entry.items.length).sort((a, b) => b.id.localeCompare(a.id));
-}
-
-export function createReleaseNotes(directory, {
-  url = process.env.CW_CHANGELOG_URL || DEFAULT_CHANGELOG_URL,
-  localOnly = process.env.CW_CHANGELOG_SOURCE === 'local',
-  root = path.resolve(import.meta.dirname, '../..'),
-  fetchImpl = fetch,
-  now = Date.now,
-} = {}) {
+export function createReleaseNotes(directory) {
   const file = path.join(directory, 'console-release-reads.json');
-  let cache = null;
-
-  const readLocal = () => {
-    try { return parseChangelog(fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8')); }
-    catch { return []; }
+  const history = () => {
+    const deployed = readJson(path.join(directory, 'console-deployment-history.json'), []);
+    if (!Array.isArray(deployed) || deployed.some(entry => !entry || typeof entry.version !== 'string' || !Array.isArray(entry.items)
+      || entry.items.some(item => typeof item !== 'string') || typeof entry.title !== 'string' || typeof entry.author !== 'string' || typeof entry.date !== 'string')) throw Error('部署更新记录无效');
+    return [...deployed, ...releases];
   };
-
-  async function entries() {
-    if (localOnly) return { entries: readLocal(), source: 'local' };
-    if (cache && now() - cache.at < CACHE_TTL_MS) return cache.value;
-    try {
-      const response = await fetchImpl(url, { signal: AbortSignal.timeout(10_000) });
-      if (!response.ok) throw new Error('HTTP ' + response.status);
-      const list = parseChangelog(await response.text());
-      if (!list.length) throw new Error('更新日志为空');
-      cache = { at: now(), value: { entries: list, source: 'upstream' } };
-      return cache.value;
-    } catch {
-      // 拉不到上游时退回本地文件，保持更新记录可用。
-      const local = readLocal();
-      cache = { at: now(), value: { entries: local, source: 'local' } };
-      return cache.value;
-    }
-  }
-
-  const readState = () => {
+  const read = () => {
     const data = readJson(file, { version: 1, readers: {} });
     if (data?.version !== 1 || !data.readers || typeof data.readers !== 'object' || Array.isArray(data.readers)) throw Error('更新记录已读数据无效');
     return data;
   };
-
   return {
-    async view(userId = 'local') {
-      const { entries: list, source } = await entries();
-      const latestId = list[0]?.id ?? '';
-      return { entries: list.slice(0, 60), latestId, source, unread: Boolean(latestId) && readState().readers[userId] !== latestId };
+    view(userId) {
+      const entries = history();
+      return { releases: entries, latestVersion: entries[0].version, unread: read().readers[userId] !== entries[0].version };
     },
-    acknowledge(userId, id) {
-      if (!id || typeof id !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(id)) throw Error('更新日期无效，请刷新页面');
+    acknowledge(userId, version) {
+      const entries = history();
+      const index = entries.findIndex(release => release.version === version);
+      if (index < 0) throw Error('更新版本不存在，请刷新页面');
       withFileLock(file, () => {
-        const data = readState();
-        if (data.readers[userId] >= id) return;
-        data.readers[userId] = id;
+        const data = read();
+        const previous = entries.findIndex(release => release.version === data.readers[userId]);
+        if (previous >= 0 && previous <= index) return;
+        data.readers[userId] = version;
         atomicJson(file, data);
       });
       return { ok: true };

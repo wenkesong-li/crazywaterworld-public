@@ -20,4 +20,3 @@ certificates/
 
 # Local server deployment configuration
 deploy/
-runtime/

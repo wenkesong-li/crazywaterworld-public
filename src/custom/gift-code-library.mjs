@@ -1,9 +1,11 @@
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { DATA_DIR } from '../accounts.mjs';
 import { atomicJson, readJson, withFileLock } from '../json-store.mjs';
 
-export const GIFT_CODE_SOURCE = 'https://m.ali213.net/news/gl2602/1747967.html';
+import { giftSources, parseWikiGiftCodes, fetchGiftSource, fetchCustomGiftSource, customGiftSourceUrl } from './gift-code-sources.mjs';
+
+export const GIFT_CODE_SOURCE = giftSources[0].url;
 export const giftDay = time => new Date(time + 8 * 3600000).toISOString().slice(0, 10);
 const expiredDate = (date, now) => date && Date.parse(date + 'T23:59:59.999+08:00') < now;
 export const hasGiftCodeHistory = row => row.status==='skipped'?String(row.detail??'').includes('已有兑换记录')
@@ -38,7 +40,6 @@ export function parseGiftCodeArticle(html) {
 
 export function createGiftCodeLibrary({ directory = DATA_DIR, now = Date.now, fetcher = fetch } = {}) {
   const catalogFile = path.join(directory, 'public-gift-codes.json'), preferenceFile = path.join(directory, 'gift-code-preferences.json');
-  const manualFile = path.join(directory, 'shared-gift-codes.json');
   const read = () => {
     const data = readJson(catalogFile, { version: 1, codes: [], expired: [] });
     if (data?.version !== 1 || !Array.isArray(data.codes) || !Array.isArray(data.expired)) throw Error('公共礼包码数据库无效');
@@ -49,47 +50,112 @@ export function createGiftCodeLibrary({ directory = DATA_DIR, now = Date.now, fe
     if (data?.version !== 1 || !Array.isArray(data.accounts)) throw Error('自动兑换设置无效');
     return data;
   };
-  // 手动添加的礼包码全账号共享；旧版本按账号保存的手动码一次性迁移合并到共享库。
-  const sharedCodes = () => withFileLock(manualFile, () => {
-    const data = readJson(manualFile, { version: 1, codes: [] });
-    if (data?.version !== 1 || !Array.isArray(data.codes)) throw Error('共享礼包码数据库无效');
-    const legacy = preferences().accounts.filter(account => Array.isArray(account.manualCodes) && account.manualCodes.length);
-    if (legacy.length) withFileLock(preferenceFile, () => {
-      const prefs = preferences();
-      const merged = new Map(data.codes.map(row => [row.code, row]));
-      for (const account of prefs.accounts) {
-        for (const row of account.manualCodes ?? []) {
-          const known = merged.get(row.code);
-          merged.set(row.code, known
-            ? { ...known, expiresAt: row.expiresAt && (!known.expiresAt || row.expiresAt < known.expiresAt) ? row.expiresAt : known.expiresAt }
-            : { code: row.code, expiresAt: row.expiresAt ?? null, firstSeenAt: row.firstSeenAt ?? new Date(now()).toISOString() });
-        }
-        account.manualCodes = [];
-      }
-      data.codes = [...merged.values()];
-      atomicJson(manualFile, data); atomicJson(preferenceFile, prefs);
-    });
-    return data;
-  });
   const changePreference = (id, work) => withFileLock(preferenceFile, () => {
     const data = preferences();
     let account = data.accounts.find(entry => entry.id === id);
     if (!account) { account = { id, enabled: false }; data.accounts.push(account); }
     work(account); atomicJson(preferenceFile, data); return { ...account };
   });
+  const snapshots = data => data.sourceRows ?? { ali213: data.codes };
+  const rowExpired = row => row.expiresAtMs != null ? row.expiresAtMs < now() : expiredDate(row.expiresAt, now());
+  const sourcesFor = data => [...giftSources, ...(data.customChannels ?? [])];
+  function mergeChannels(data) {
+    const blocked = new Set(data.expired.map(row => row.code));
+    const merged = new Map();
+    for (const { id, name } of sourcesFor(data)) {
+      for (const row of snapshots(data)[id] ?? []) {
+        if (blocked.has(row.code) || rowExpired(row)) continue;
+        const existing = merged.get(row.code);
+        if (!existing) {
+          merged.set(row.code, { ...row, sources: [id], sourceDetails: [{ name, trigger: row.trigger }] });
+          continue;
+        }
+        const time = row.expiresAtMs ?? (row.expiresAt ? Date.parse(row.expiresAt + 'T23:59:59.999+08:00') : Infinity);
+        const previous = existing.expiresAtMs ?? (existing.expiresAt ? Date.parse(existing.expiresAt + 'T23:59:59.999+08:00') : Infinity);
+        merged.set(row.code, { ...(time < previous ? row : existing), reward: existing.reward || row.reward, sources: [...new Set([...existing.sources, id])], sourceDetails: [...existing.sourceDetails, { name, trigger: row.trigger }] });
+      }
+    }
+    data.codes = [...merged.values()];
+  }
   let fetching = null;
   const library = {
-    pruneExpired() {
-      if(!read().codes.some(row=>expiredDate(row.expiresAt,now())))return;
-      withFileLock(catalogFile,()=>{const data=read(),expired=new Set(data.expired.map(row=>row.code));
-        data.codes=data.codes.filter(row=>{if(!expiredDate(row.expiresAt,now()))return true;if(!expired.has(row.code)){data.expired.push({code:row.code,reason:'来源注明的有效期已结束',at:new Date(now()).toISOString()});expired.add(row.code);}return false;});atomicJson(catalogFile,data);});
+    fetchHistory(id) {
+      const batches = read().fetchHistory ?? [];
+      if (!id) return batches.map(({ rows, ...batch }) => batch);
+      const batch = batches.find(entry => entry.id === id);
+      if (!batch) throw Error('抓取批次已不存在');
+      const rewards = read().verifiedRewards ?? {};
+      return { ...batch, rows: batch.rows.map(row => ({
+        ...row, reward: row.reward || (Object.hasOwn(rewards, row.code) ? rewards[row.code] : ''),
+      })) };
     },
-    isExpired(code) { const data=read();return data.expired.some(entry => entry.code === code)||data.codes.some(entry=>entry.code===code&&expiredDate(entry.expiresAt,now())); },
+    rememberReward(code, reward) {
+      if (typeof reward !== 'string' || !reward.trim()) return;
+      withFileLock(catalogFile, () => {
+        const data = read();
+        const shared = [...data.codes, ...(data.sharedCodes ?? [])].find(row => row.code === code);
+        const recorded = (data.fetchHistory ?? []).some(batch => batch.rows.some(row => row.code === code));
+        if ((!shared && !recorded) || shared?.reward) return;
+        const rewards = data.verifiedRewards ?? {};
+        if (Object.hasOwn(rewards, code)) return;
+        data.verifiedRewards = { ...rewards, [code]: reward.trim().slice(0, 1000) };
+        atomicJson(catalogFile, data);
+      });
+    },
+    channels() {
+      return sourcesFor(read()).map(source => ({ ...source, fixed: !source.format }));
+    },
+    updateChannel({ id, name, url, format, remove }) {
+      if (giftSources.some(source => source.id === id)) throw Error('内置公共礼包码渠道不可修改或移除');
+      withFileLock(catalogFile, () => {
+        const data = read();
+        const custom = data.customChannels ?? [];
+        const previous = custom.find(source => source.id === id);
+        if (id && !previous) throw Error('找不到自建渠道');
+        data.sourceRows = snapshots(data);
+        if (remove === true) {
+          if (!previous) throw Error('请选择要移除的渠道');
+          data.customChannels = custom.filter(source => source.id !== id);
+          delete data.sourceRows[id];
+        } else {
+          const title = typeof name === 'string' ? name.trim() : '';
+          if (!title || title.length > 40 || !['wiki', 'article'].includes(format)) throw Error('请填写渠道名称并选择数据格式');
+          const href = customGiftSourceUrl(url).href;
+          if (sourcesFor(data).some(source => source.id !== id && source.url === href)) throw Error('这个网址已添加');
+          if (!previous && custom.length >= 10) throw Error('最多添加 10 个自建渠道');
+          const source = { id: previous?.id ?? randomUUID(), name: title, url: href, format };
+          data.customChannels = [...custom.filter(item => item.id !== id), source];
+          if (previous && (previous.url !== href || previous.format !== format)) delete data.sourceRows[id];
+        }
+        mergeChannels(data);
+        atomicJson(catalogFile, data);
+      });
+      return library.channels();
+    },
+    pruneExpired() {
+      const current = read();
+      if (![...current.codes, ...(current.sharedCodes ?? [])].some(rowExpired)) return;
+      withFileLock(catalogFile,()=>{const data=read(),expired=new Set(data.expired.map(row=>row.code));
+        const active = row => {
+          if (!rowExpired(row) && !expired.has(row.code)) return true;
+          if (!expired.has(row.code)) {
+            data.expired.push({ code: row.code, reason: '注明的有效期已结束', at: new Date(now()).toISOString() });
+            expired.add(row.code);
+          }
+          return false;
+        };
+        data.sharedCodes = (data.sharedCodes ?? []).filter(active);
+        data.codes = data.codes.filter(active);
+        atomicJson(catalogFile, data);
+      });
+    },
+    isExpired(code) { const data=read();return data.expired.some(entry => entry.code === code)||[...data.codes, ...(data.sharedCodes ?? [])].some(entry=>entry.code===code&&rowExpired(entry)); },
     expire(code, reason = '游戏服务器明确返回礼包码已过期') {
       withFileLock(catalogFile, () => {
         const data = read();
         if (data.expired.some(entry => entry.code === code)) return;
         data.codes = data.codes.filter(entry => entry.code !== code);
+        data.sharedCodes = (data.sharedCodes ?? []).filter(entry => entry.code !== code);
         data.expired.push({ code, reason, at: new Date(now()).toISOString() });
         atomicJson(catalogFile, data);
       });
@@ -99,38 +165,74 @@ export function createGiftCodeLibrary({ directory = DATA_DIR, now = Date.now, fe
       const known=new Set(read().expired.map(row=>row.code));
       for (const row of rows) if (!known.has(row.code)&&row.status === 'rejected' && (row.promptName === 'GIFT_CODE_EXPIRED' || row.detail === '礼包码已过期')) {library.expire(row.code);known.add(row.code);}
     },
-    entries() {
+    entries(id) {
       library.pruneExpired();
       const data=read(),expired=new Set(data.expired.map(row=>row.code));
       const codes=new Map(data.codes.map(row=>[row.code,{...row,manual:false}]));
-      for(const row of sharedCodes().codes){
-        if(expired.has(row.code)||expiredDate(row.expiresAt,now())){codes.delete(row.code);continue;}
-        const publicRow=codes.get(row.code);
-        codes.set(row.code,publicRow?{...publicRow,expiresAt:row.expiresAt&&(!publicRow.expiresAt||row.expiresAt<publicRow.expiresAt)?row.expiresAt:publicRow.expiresAt,manual:true}:{...row,manual:true});
+      for (const row of data.sharedCodes ?? []) {
+        if (expired.has(row.code) || expiredDate(row.expiresAt, now())) {
+          codes.delete(row.code);
+          continue;
+        }
+        const existing = codes.get(row.code);
+        const expiry = [row.expiresAt, existing?.expiresAt].filter(Boolean).sort()[0] ?? null;
+        codes.set(row.code, { ...existing, ...row, expiresAt: expiry, manual: true, shared: true });
       }
-      return [...codes.values()];
+      if(id){
+        const personal=library.auto(id).manualCodes??[];
+        for(const row of personal){
+          if(expired.has(row.code)||expiredDate(row.expiresAt,now())){codes.delete(row.code);continue;}
+          const shared=codes.get(row.code);
+          codes.set(row.code,shared?{...shared,expiresAt:row.expiresAt&&(!shared.expiresAt||row.expiresAt<shared.expiresAt)?row.expiresAt:shared.expiresAt}:{...row,manual:true});
+        }
+      }
+      const rewards = data.verifiedRewards ?? {};
+      return [...codes.values()].map(row => Object.hasOwn(rewards, row.code) && !row.reward
+        ? { ...row, reward: rewards[row.code] } : row);
     },
-    available(rows) {
+    available(rows,id) {
       library.pruneExpired();
       const unavailable = new Set(rows.filter(hasGiftCodeHistory).map(row => row.code));
-      return library.entries().filter(row => !expiredDate(row.expiresAt, now()) && !unavailable.has(row.code)).map(row => row.code);
+      return library.entries(id).filter(row => !expiredDate(row.expiresAt, now()) && !unavailable.has(row.code)).map(row => row.code);
     },
     view() {
       library.pruneExpired();
-      const data = read(), codes = data.codes.filter(row => !expiredDate(row.expiresAt, now()));
+      const data = read(), codes = library.entries();
       return { source: GIFT_CODE_SOURCE, updatedAt: data.sourceUpdatedAt, lastSyncedAt: data.lastSuccessAt ?? null,
-        lastError: data.lastError ?? '', dailyTime: '每天北京时间 08:00（当天已成功抓取则使用缓存）', total: codes.length, unique: codes.length,
+        lastError: data.lastError ?? '', lastFetch: data.lastFetch ?? null, dailyTime: '每天北京时间 08:00 自动抓取，也可手动获取最新', total: codes.length, unique: codes.length,
         expired: data.expired.length, codes, tryCodes: codes.map(row => row.code),
         revision: createHash('sha256').update(codes.map(row => row.code).join('\n')).digest('hex') };
     },
     auto(id) { return { enabled: false, ...preferences().accounts.find(entry => entry.id === id) }; },
-    accountRevision() { return createHash('sha256').update(JSON.stringify(library.entries().map(row=>[row.code,row.expiresAt]))).digest('hex'); },
-    addManual(code,expiresAt) {
+    accountRevision(id) { return createHash('sha256').update(JSON.stringify(library.entries(id).map(row=>[row.code,row.expiresAt]))).digest('hex'); },
+    addManual(ids,code,expiresAt) {
       if(typeof code!=='string'||!/^[\p{L}\p{N}_-]{1,128}$/u.test(code.trim()))throw Error('礼包码需为1至128个汉字、字母、数字、下划线或短横线');
       code=code.trim();expiresAt=expiresAt||null;
       if(expiresAt&&(typeof expiresAt!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(expiresAt)||new Date(expiresAt+'T00:00:00Z').toISOString().slice(0,10)!==expiresAt||expiredDate(expiresAt,now())))throw Error('到期日期无效或已经过期');
       if(library.isExpired(code))throw Error('该礼包码已全局下架，不能再次添加');
-      withFileLock(manualFile,()=>{const data=sharedCodes();const rows=data.codes;data.codes=[...rows.filter(row=>row.code!==code),{code,expiresAt,firstSeenAt:rows.find(row=>row.code===code)?.firstSeenAt??new Date(now()).toISOString()}];atomicJson(manualFile,data);});
+      withFileLock(preferenceFile,()=>{const data=preferences();for(const id of ids){let account=data.accounts.find(row=>row.id===id);if(!account){account={id,enabled:false};data.accounts.push(account);}const rows=account.manualCodes??[];account.manualCodes=[...rows.filter(row=>row.code!==code),{code,expiresAt,firstSeenAt:rows.find(row=>row.code===code)?.firstSeenAt??new Date(now()).toISOString()}];}atomicJson(preferenceFile,data);});
+    },
+    addSharedBatch(input, expiresAt) {
+      if (!Array.isArray(input) || input.length === 0 || input.length > 500
+        || input.some(code => typeof code !== 'string' || !/^[\p{L}\p{N}_-]{1,128}$/u.test(code.trim()))) {
+        throw Error('请输入 1 至 500 条有效礼包码，每行一条');
+      }
+      const codes = [...new Set(input.map(code => code.trim()))];
+      const date = expiresAt || null;
+      if (date && (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)
+        || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date
+        || expiredDate(date, now()))) throw Error('到期日期无效或已经过期');
+      return withFileLock(catalogFile, () => {
+        const data = read();
+        const rows = new Map((data.sharedCodes ?? []).map(row => [row.code, row]));
+        for (const code of codes) {
+          if (library.isExpired(code)) throw Error('礼包码已过期或全局下架：' + code);
+          rows.set(code, { code, expiresAt: date, firstSeenAt: rows.get(code)?.firstSeenAt ?? new Date(now()).toISOString() });
+        }
+        data.sharedCodes = [...rows.values()];
+        atomicJson(catalogFile, data);
+        return codes.length;
+      });
     },
     setAuto(id, enabled) {
       if (typeof enabled !== 'boolean') throw Error('自动兑换开关必须为布尔值');
@@ -142,35 +244,72 @@ export function createGiftCodeLibrary({ directory = DATA_DIR, now = Date.now, fe
     async refresh({ force = false } = {}) {
       if (fetching) return fetching;
       const data = read(), time = now();
-      if (data.lastSuccessAt && giftDay(Date.parse(data.lastSuccessAt)) === giftDay(time)) return library.view();
-      if (data.lastAttemptAt && time - data.lastAttemptAt < (force ? 60000 : 3600000) || data.leaseUntil > time) return library.view();
+      if (!force && data.lastSuccessAt && giftDay(Date.parse(data.lastSuccessAt)) === giftDay(time)) return library.view();
+      if ((!force && data.lastAttemptAt && time - data.lastAttemptAt < 3600000) || data.leaseUntil > time) return library.view();
       const claimed = withFileLock(catalogFile, () => {
-        const latest = read(); if (latest.leaseUntil > now()) return false;
-        latest.lastAttemptAt = now(); latest.leaseUntil = now() + 90000; atomicJson(catalogFile, latest); return true;
+        const latest = read();
+        if (latest.leaseUntil > now()) return false;
+        latest.lastAttemptAt = now();
+        latest.leaseUntil = now() + 90000;
+        atomicJson(catalogFile, latest);
+        return true;
       });
       if (!claimed) return library.view();
       fetching = (async () => {
-        try {
-          const response = await fetcher(GIFT_CODE_SOURCE, { redirect: 'error', signal: AbortSignal.timeout(20000), headers: { 'user-agent': 'CrazyWaterWorld-GiftCatalog/1.0', accept: 'text/html' } });
-          if (!response.ok) throw Error('来源站点返回 HTTP ' + response.status);
-          const chunks = []; let size = 0;
-          for await (const chunk of response.body) { size += chunk.byteLength; if (size > 2 * 1024 * 1024) { response.body.cancel?.().catch(() => {}); throw Error('来源页面超过大小限制'); } chunks.push(Buffer.from(chunk)); }
-          const parsed = parseGiftCodeArticle(Buffer.concat(chunks).toString('utf8'));
-          withFileLock(catalogFile, () => {
-            const latest = read(), expired = new Set(latest.expired.map(row => row.code));
-            const entries = new Map(latest.codes.map(row => [row.code, row]));
-            for (const row of parsed.rows) {
-              if (expired.has(row.code)) continue;
-              if (expiredDate(row.expiresAt, now())) { entries.delete(row.code); latest.expired.push({ code: row.code, reason: '来源注明的有效期已结束', at: new Date(now()).toISOString() }); expired.add(row.code); continue; }
-              entries.set(row.code, { ...entries.get(row.code), ...row, firstSeenAt: entries.get(row.code)?.firstSeenAt ?? new Date(now()).toISOString(),lastSeenAt:new Date(now()).toISOString() });
-            }
-            Object.assign(latest, { codes: [...entries.values()], sourceUpdatedAt: parsed.sourceUpdatedAt, lastSuccessAt: new Date(now()).toISOString(), lastError: '', leaseUntil: 0 });
-            atomicJson(catalogFile, latest);
-          });
-        } catch (error) {
-          withFileLock(catalogFile, () => { const latest = read(); latest.lastError = error.message; latest.leaseUntil = 0; atomicJson(catalogFile, latest); });
-          throw error;
-        }
+        const results = await Promise.all(sourcesFor(data).map(async source => {
+          try {
+            const content = await (source.format ? fetchCustomGiftSource(source) : fetchGiftSource(source, fetcher));
+            const parsed = source.id === 'wiki' || source.format === 'wiki' ? parseWikiGiftCodes(content, now()) : parseGiftCodeArticle(content);
+            return { ...source, ...parsed };
+          } catch (error) {
+            return { ...source, error: error.message };
+          }
+        }));
+        withFileLock(catalogFile, () => {
+          const latest = read();
+          latest.sourceRows = snapshots(latest);
+          const codes = new Set();
+          let success = false;
+          const currentSources = new Map(sourcesFor(latest).map(source => [source.id, source]));
+          for (const result of results) {
+            const source = currentSources.get(result.id);
+            if (result.error || source?.url !== result.url || source.format !== result.format) continue;
+            success = true;
+            const rows = result.rows.filter(row => !rowExpired(row)).map(row => ({ ...row, trigger: force ? 'manual' : 'automatic' }));
+            const previousRows = result.id === 'ali213' ? latest.sourceRows[result.id] ?? [] : [];
+            latest.sourceRows[result.id] = [...new Map([...previousRows, ...rows].map(row => [row.code, row])).values()]
+              .filter(row => !rowExpired(row));
+            for (const row of rows) codes.add(row.code);
+          }
+          const prior = new Set(latest.codes.map(row => row.code));
+          mergeChannels(latest);
+          const available = new Set(latest.codes.map(row => row.code));
+          const fetched = [...codes].filter(code => available.has(code));
+          const errors = results.filter(result => result.error).map(result => result.name + '：' + result.error);
+          latest.lastFetch = {
+            at: new Date(now()).toISOString(),
+            codes: fetched,
+            added: fetched.filter(code => !prior.has(code)).length,
+            channels: results.map(({ id, name, rows, error }) => ({ id, name, count: rows?.filter(row => !rowExpired(row)).length ?? 0, error })),
+          };
+          const fetchedSet = new Set(fetched);
+          const batch = {
+            id: randomUUID(), at: latest.lastFetch.at, trigger: force ? 'manual' : 'automatic', fetched: fetched.length, added: latest.lastFetch.added,
+            channels: latest.lastFetch.channels.map(({ id, name, count, error }) => ({ id, name, count, error })),
+            rows: latest.codes.filter(row => fetchedSet.has(row.code)).map(row => ({
+              code: row.code, expiresAt: row.expiresAt, expiresAtMs: row.expiresAtMs, reward: row.reward, sources: row.sources, sourceDetails: row.sourceDetails,
+            })),
+          };
+          latest.fetchHistory = [batch, ...(latest.fetchHistory ?? [])].slice(0, 30);
+          if (success) {
+            latest.lastSuccessAt = batch.at;
+            latest.sourceUpdatedAt = results.filter(result => result.sourceUpdatedAt)
+              .map(result => result.sourceUpdatedAt).sort().at(-1) ?? latest.sourceUpdatedAt;
+          }
+          latest.lastError = errors.join('；');
+          latest.leaseUntil = 0;
+          atomicJson(catalogFile, latest);
+        });
         return library.view();
       })().finally(() => { fetching = null; });
       return fetching;
@@ -180,6 +319,16 @@ export function createGiftCodeLibrary({ directory = DATA_DIR, now = Date.now, fe
       return (!data.lastSuccessAt || giftDay(Date.parse(data.lastSuccessAt)) !== giftDay(time)) && new Date(time+8*3600000).getUTCHours()>=8;
     },
   };
+  if (Object.hasOwn(read(), 'channelIds')) {
+    withFileLock(catalogFile, () => {
+      const data = read();
+      if (!Object.hasOwn(data, 'channelIds')) return;
+      data.sourceRows = snapshots(data);
+      delete data.channelIds;
+      mergeChannels(data);
+      atomicJson(catalogFile, data);
+    });
+  }
   return library;
 }
 

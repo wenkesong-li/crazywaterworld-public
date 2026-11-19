@@ -1,18 +1,20 @@
 import * as React from "react"
 import { renderToStaticMarkup } from "react-dom/server"
-import { Boxes, Building2, CalendarDays, Check, ChevronDown, CircleUserRound, Download, History, LayoutDashboard, Monitor, Moon, MoreHorizontal, RefreshCw, ScrollText, Settings2, Ship, Sun, Swords, UsersRound, X } from "lucide-react"
+import { Backpack, Coins, Gem, Boxes, Building2, CalendarDays, Check, ChevronDown, CircleUserRound, Download, LayoutDashboard, Monitor, Moon, MoreHorizontal, RefreshCw, ScrollText, Settings2, Ship, Sun, Swords, UsersRound, X } from "lucide-react"
 import { Button } from "./button"
 import { Badge } from "./badge"
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "./card"
 import { DialogFooter, DialogHeader, DialogTitle } from "./dialog"
 import { NativeSelect } from "./native-select"
 import { Input } from "./input"
+import { HelpTip } from "./help-tip"
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "./table"
 import { LOG_GROUPS, LOG_GROUP_TONES } from "../log-categories.mjs"
 
 // 手机底栏使用短名。
 const tabs = [
   ["overview", "总览", "总览", LayoutDashboard],
+  ["inventory", "背包", "背包", Backpack],
   ["settings", "挂机配置", "配置", Settings2], ["manual", "建筑一览", "建筑", Building2],
   ["stages", "挑战", "挑战", Swords], ["lineups", "阵容", "阵容", UsersRound],
   ["activities", "活动", "活动", CalendarDays], ["resources", "杂项", "杂项", Boxes],
@@ -23,18 +25,23 @@ const themes = [["system", "跟随系统", Monitor], ["light", "白天", Sun], [
 
 export function chrome() {
   return renderToStaticMarkup(<header>
-        <Button id="console-version-open" type="button" variant="outline" size="sm" hidden aria-haspopup="dialog" aria-controls="console-version-warning"><RefreshCw aria-hidden="true" />页面已过期</Button>
     <div className="headline">
       <div className="mast">
         <span className="mast-icon"><Ship aria-hidden="true" /></span><h1>疯狂水世界</h1><span className="brand-label">航行控制台</span>
+        <Button id="console-version-open" type="button" variant="outline" size="sm" hidden aria-haspopup="dialog" aria-controls="console-version-warning"><RefreshCw aria-hidden="true" />页面已过期</Button>
       </div>
       <div className="connection">
         <span id="busy" className="sr-only" role="status" aria-live="polite" aria-atomic="true">未连接</span>
         <label className="account-label" htmlFor="account-picker-trigger">当前账号</label>
         <div id="account-picker" className="account-picker">
           <select id="account" hidden aria-hidden="true" tabIndex={-1} />
-          <Button id="account-picker-trigger" type="button" variant="outline" className="w-full min-w-0 justify-start font-normal" aria-haspopup="listbox" aria-controls="account-picker-list" aria-expanded="false" title="选择账号并查看状态">
-            <span id="account-picker-title" className="min-w-0 flex-1 truncate text-left">选择账号</span>
+          <Button id="account-picker-trigger" type="button" variant="outline" className="account-identity-trigger w-full min-w-0 justify-start font-normal" aria-haspopup="listbox" aria-controls="account-picker-list" aria-expanded="false" title="选择账号并查看状态">
+            <span className="account-identity">
+              <span id="account-channel" hidden />
+              <span id="account-world" hidden />
+              <span id="account-picker-title">选择账号</span>
+              <span id="account-role-stats" hidden>Lv.<strong id="account-level">—</strong><span className="account-power">战力 <strong id="account-power">—</strong></span></span>
+            </span>
             <Badge id="account-picker-status" className="chip rounded-md" variant="outline">未连接</Badge>
             <ChevronDown className="size-4 shrink-0 opacity-50" aria-hidden="true" />
           </Button>
@@ -42,7 +49,7 @@ export function chrome() {
         </div>
         <Button id="connect" size="sm">连接</Button>
         <div className="hosting-controls">
-          <label className="hosting-interval" htmlFor="loop-every"><span className="hosting-interval-label">间隔</span><Input id="loop-every" className="h-8 w-20" type="number" min="1" max="86400" step="1" required defaultValue="60" disabled aria-label="挂机间隔（秒）" aria-describedby="loop-interval-status" title="挂机间隔（秒），按账号自动保存，下一轮使用新间隔" /><span>秒</span></label>
+          <div className="hosting-interval"><label className="hosting-interval-label" htmlFor="loop-every">间隔</label><Input id="loop-every" className="h-8 w-20" type="number" min="1" max="86400" step="1" required defaultValue="60" disabled aria-label="挂机间隔（秒）" aria-describedby="loop-interval-status" title="挂机间隔（秒），按账号自动保存，下一轮使用新间隔" /><span>秒</span><HelpTip title="挂机间隔">每轮挂机检查结束后，等待设定的秒数再开始下一轮。例如设为 60 秒，代表一轮结束后等约 60 秒再检查。间隔按当前游戏账号自动保存。</HelpTip></div>
           <Button id="loop-toggle" size="sm" variant="outline" disabled title="按已保存的任务持续挂机，直到手动暂停">开始挂机</Button>
           <Button id="account-pause" size="sm" variant="outline" disabled title="按已保存的任务开始持续托管">开始托管</Button>
           <Button id="logs-open" size="sm" variant="outline" aria-haspopup="dialog" aria-controls="journal-dialog"><ScrollText aria-hidden="true" />日志 <span id="log-top-count">0</span></Button>
@@ -50,8 +57,6 @@ export function chrome() {
           <span id="loop-hint" className="sr-only" role="status" />
         </div>
         <span id="hint" className="warn" />
-        <Button id="release-notes-open" type="button" size="sm" variant="outline" aria-haspopup="dialog" aria-controls="release-notes-dialog" title="查看上游更新记录"><History aria-hidden="true" />更新记录</Button>
-        <Button id="update-open" type="button" size="sm" variant="outline" aria-haspopup="dialog" aria-controls="update-dialog" title="检查 GitHub 上的最新版本"><RefreshCw aria-hidden="true" />检查更新</Button>
         <div id="theme-picker" className="theme-picker">
           <Button id="theme-trigger" type="button" size="icon-sm" variant="outline" className="pointer-coarse:size-10" aria-label="切换主题，当前为跟随系统" title="切换主题，当前为跟随系统" aria-haspopup="menu" aria-controls="theme-menu" aria-expanded="false">
             {themes.map(([mode, , Icon]) => <span key={mode} data-theme-icon={mode} hidden={mode !== "system"}><Icon aria-hidden="true" /></span>)}
@@ -62,6 +67,12 @@ export function chrome() {
             </Button>)}
           </div>
         </div>
+      </div>
+      <div className="account-metrics" aria-label="当前角色信息">
+        <span><Coins aria-hidden="true" />金币 <strong id="account-gold">—</strong></span>
+        <span><Gem aria-hidden="true" />钻石 <strong id="account-ruby">—</strong></span>
+        <button id="account-balance-refresh" type="button" aria-label="刷新余额" title="刷新金币和钻石" disabled><RefreshCw aria-hidden="true" />刷新</button>
+        <span id="account-balance-feedback" className="sr-only" role="status" />
       </div>
     </div>
     <nav id="tabs" aria-label="功能导航">{tabs.map(([key, title, short, Icon]) =>
@@ -97,6 +108,50 @@ export function journal() {
 
 export function dialogs() {
   return renderToStaticMarkup(<>
+    <dialog id="console-version-warning" aria-labelledby="console-version-title" aria-describedby="console-version-description">
+      <DialogHeader>
+        <DialogTitle id="console-version-title" tabIndex={-1} autoFocus>需要刷新控制台</DialogTitle>
+        <p id="console-version-description" className="dim">控制台已更新或重启。刷新后可继续保存修改和启动任务。</p>
+      </DialogHeader>
+      <div className="version-draft">
+        <p>刷新会丢弃本页未保存的修改。需要保留时，可先返回页面复制内容。</p>
+        <Button id="console-version-download" type="button" variant="outline" size="sm"><Download aria-hidden="true" />下载游戏配置草稿</Button>
+      </div>
+      <details id="console-version-account">
+        <summary>当前账号操作</summary>
+        <div className="bar">
+          <Button id="console-version-stop" type="button" variant="outline" size="sm">停止当前账号挂机</Button>
+          <Button id="console-version-disconnect" type="button" variant="outline" size="sm">断开当前账号</Button>
+        </div>
+        <p id="console-version-result" role="status" className="dim" />
+      </details>
+      <div className="version-footer">
+        <Button type="button" id="console-version-dismiss" variant="outline">返回页面</Button>
+        <Button type="button" id="console-version-reload">刷新页面</Button>
+      </div>
+    </dialog>
+    <dialog id="guild-tech-upgrade-dialog" aria-labelledby="guild-tech-upgrade-title" aria-describedby="guild-tech-levels">
+      <DialogHeader>
+        <DialogTitle id="guild-tech-upgrade-title" />
+        <p id="guild-tech-levels" className="dim" />
+      </DialogHeader>
+      <form id="guild-tech-upgrade-form">
+        <div id="guild-tech-target-field" className="guild-tech-target-field">
+          <label htmlFor="guild-tech-target">目标等级</label>
+          <Input id="guild-tech-target" type="number" step="1" required />
+          <Button id="guild-tech-highest" type="button" variant="outline" size="sm" />
+        </div>
+        <dl className="guild-tech-quote">
+          <div><dt>预计消耗</dt><dd id="guild-tech-estimate" /></div>
+          <div><dt id="guild-tech-balance-label">当前余额</dt><dd id="guild-tech-balance" /></div>
+        </dl>
+        <p id="guild-tech-feedback" className="dim" role="status" />
+        <div className="guild-tech-dialog-actions">
+          <Button id="guild-tech-dismiss" type="button" variant="outline">取消</Button>
+          <Button id="guild-tech-submit" type="submit">开始升级</Button>
+        </div>
+      </form>
+    </dialog>
     <dialog id="modal" aria-labelledby="m-title">
       <DialogHeader><DialogTitle id="m-title" /></DialogHeader>
       <div id="m-body" />
@@ -124,6 +179,7 @@ export function templates() {
   return renderToStaticMarkup(<>
     <template id="ui-table"><Table><TableHeader><TableRow><TableHead /></TableRow></TableHeader><TableBody><TableRow><TableCell /></TableRow></TableBody></Table></template>
     <template id="ui-button"><Button variant="outline" size="sm" /></template>
+    <template id="ui-confirm"><Button size="sm" /></template>
     <template id="ui-select"><NativeSelect size="sm" /></template>
     <template id="ui-number"><Input type="number" /></template>
     <template id="ui-delete"><Button variant="destructive" size="sm" /></template>
@@ -166,27 +222,5 @@ export function templates() {
         <CardFooter className="account-card-footer items-stretch"><p className="dim" data-account-field="seen" /><div className="account-card-actions"><Button type="button" variant="outline" size="sm" className="px-2" data-account-action="details" aria-haspopup="dialog" aria-controls="account-info-dialog">查看详情</Button><Button type="button" variant="outline" size="sm" className="px-2" data-account-action="login-settings" aria-haspopup="dialog" aria-controls="account-login-dialog">登录设置</Button><Button type="button" variant="outline" size="sm" className="px-2" data-account-action="select">切换账号</Button><Button type="button" size="sm" className="px-2" data-account-action="loop">开始挂机</Button></div></CardFooter>
       </Card>
     </template>
-      <dialog id="console-version-warning" aria-labelledby="console-version-title" aria-describedby="console-version-description">
-      <DialogHeader>
-        <DialogTitle id="console-version-title" tabIndex={-1} autoFocus>需要刷新控制台</DialogTitle>
-        <p id="console-version-description" className="dim">控制台已更新或重启。刷新后可继续保存修改和启动任务。</p>
-      </DialogHeader>
-      <div className="version-draft">
-        <p>刷新会丢弃本页未保存的修改。需要保留时，可先返回页面复制内容。</p>
-        <Button id="console-version-download" type="button" variant="outline" size="sm"><Download aria-hidden="true" />下载游戏配置草稿</Button>
-      </div>
-      <details id="console-version-account">
-        <summary>当前账号操作</summary>
-        <div className="bar">
-          <Button id="console-version-stop" type="button" variant="outline" size="sm">停止当前账号挂机</Button>
-          <Button id="console-version-disconnect" type="button" variant="outline" size="sm">断开当前账号</Button>
-        </div>
-        <p id="console-version-result" role="status" className="dim" />
-      </details>
-      <div className="version-footer">
-        <Button type="button" id="console-version-dismiss" variant="outline">返回页面</Button>
-        <Button type="button" id="console-version-reload">刷新页面</Button>
-      </div>
-    </dialog>
-</>)
+  </>)
 }

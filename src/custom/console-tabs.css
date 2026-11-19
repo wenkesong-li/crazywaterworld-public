@@ -1,0 +1,35 @@
+:is(.config-tabs,.resource-tabs,.log-filter,.config-subtabs,.config-families,.bag-tabs,.activity-current-tabs,.activity-state-tabs,.log-tags) {
+  gap:6px;
+}
+:is(.resource-tabs,.log-filter,.config-subtabs,.config-families,.bag-tabs,.activity-current-tabs,.activity-state-tabs,.log-tags) > button {
+  min-height:34px;
+  border:1px solid var(--border);
+  border-radius:8px;
+  background:var(--background);
+  color:var(--foreground);
+  white-space:nowrap;
+}
+:is(.resource-tabs,.log-filter,.config-subtabs,.config-families,.bag-tabs,.activity-current-tabs,.activity-state-tabs,.log-tags) > button:hover:not(:disabled) {
+  border-color:var(--ring);
+  background:var(--accent);
+  color:var(--accent-foreground);
+}
+:is(#tabs,.config-tabs,.resource-tabs,.log-filter,.config-subtabs,.config-families,.bag-tabs,.activity-current-tabs,.activity-state-tabs,.log-tags) > button:is([aria-selected=true],[aria-current=page],[aria-pressed=true]) {
+  border-color:var(--primary);
+  background:var(--primary);
+  color:var(--primary-foreground);
+  font-weight:700;
+  box-shadow:none;
+}
+.config-families > button[aria-selected=true]::after { display:none }
+:is(#tabs,.config-tabs,.resource-tabs,.log-filter,.config-subtabs,.config-families,.bag-tabs,.activity-current-tabs,.activity-state-tabs,.log-tags) > button:focus-visible {
+  outline:2px solid var(--ring);
+  outline-offset:-2px;
+}
+.hosting-interval .help-tip { flex:none; margin:0 }
+@media (max-width:768px) {
+  .headline .hosting-controls { grid-template-columns:104px repeat(3,minmax(0,1fr)) }
+  .headline .hosting-interval { grid-template-columns:minmax(0,1fr) auto auto }
+  .headline #loop-every { width:100%; min-width:0; padding-inline:5px }
+  :is(.resource-tabs,.bag-tabs,.activity-current-tabs,.activity-state-tabs) > button { min-height:44px }
+}
