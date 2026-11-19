@@ -1,6 +1,6 @@
 import * as React from "react"
 import { renderToStaticMarkup } from "react-dom/server"
-import { Boxes, Building2, CalendarDays, Check, ChevronDown, CircleUserRound, History, LayoutDashboard, Monitor, Moon, MoreHorizontal, RefreshCw, ScrollText, Settings2, Ship, Sun, Swords, UsersRound, X } from "lucide-react"
+import { Boxes, Building2, CalendarDays, Check, ChevronDown, CircleUserRound, Download, History, LayoutDashboard, Monitor, Moon, MoreHorizontal, RefreshCw, ScrollText, Settings2, Ship, Sun, Swords, UsersRound, X } from "lucide-react"
 import { Button } from "./button"
 import { Badge } from "./badge"
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "./card"
@@ -23,6 +23,7 @@ const themes = [["system", "跟随系统", Monitor], ["light", "白天", Sun], [
 
 export function chrome() {
   return renderToStaticMarkup(<header>
+        <Button id="console-version-open" type="button" variant="outline" size="sm" hidden aria-haspopup="dialog" aria-controls="console-version-warning"><RefreshCw aria-hidden="true" />页面已过期</Button>
     <div className="headline">
       <div className="mast">
         <span className="mast-icon"><Ship aria-hidden="true" /></span><h1>疯狂水世界</h1><span className="brand-label">航行控制台</span>
@@ -165,5 +166,27 @@ export function templates() {
         <CardFooter className="account-card-footer items-stretch"><p className="dim" data-account-field="seen" /><div className="account-card-actions"><Button type="button" variant="outline" size="sm" className="px-2" data-account-action="details" aria-haspopup="dialog" aria-controls="account-info-dialog">查看详情</Button><Button type="button" variant="outline" size="sm" className="px-2" data-account-action="login-settings" aria-haspopup="dialog" aria-controls="account-login-dialog">登录设置</Button><Button type="button" variant="outline" size="sm" className="px-2" data-account-action="select">切换账号</Button><Button type="button" size="sm" className="px-2" data-account-action="loop">开始挂机</Button></div></CardFooter>
       </Card>
     </template>
-  </>)
+      <dialog id="console-version-warning" aria-labelledby="console-version-title" aria-describedby="console-version-description">
+      <DialogHeader>
+        <DialogTitle id="console-version-title" tabIndex={-1} autoFocus>需要刷新控制台</DialogTitle>
+        <p id="console-version-description" className="dim">控制台已更新或重启。刷新后可继续保存修改和启动任务。</p>
+      </DialogHeader>
+      <div className="version-draft">
+        <p>刷新会丢弃本页未保存的修改。需要保留时，可先返回页面复制内容。</p>
+        <Button id="console-version-download" type="button" variant="outline" size="sm"><Download aria-hidden="true" />下载游戏配置草稿</Button>
+      </div>
+      <details id="console-version-account">
+        <summary>当前账号操作</summary>
+        <div className="bar">
+          <Button id="console-version-stop" type="button" variant="outline" size="sm">停止当前账号挂机</Button>
+          <Button id="console-version-disconnect" type="button" variant="outline" size="sm">断开当前账号</Button>
+        </div>
+        <p id="console-version-result" role="status" className="dim" />
+      </details>
+      <div className="version-footer">
+        <Button type="button" id="console-version-dismiss" variant="outline">返回页面</Button>
+        <Button type="button" id="console-version-reload">刷新页面</Button>
+      </div>
+    </dialog>
+</>)
 }

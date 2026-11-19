@@ -12,6 +12,7 @@ import { prepareAd } from '../src/ad-shop.mjs';
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-trace-log-'));
 const douyinTrace = JSON.parse(traceJson({ sessionid: 'fixture-web-session', hostSessionId: 'fixture-host-session',
+  frameId: 'fixture-verification-frame', image: 'data:image/png;base64,fixture-challenge',
   anonymousCode: 'fixture-anonymous-code', cloudCode: 'fixture-cloud-code', code: 'fixture-login-code',
   qrImage: 'data:image/png;base64,fixture-image', error: { code: 21101 },
   message: 'sessionid=fixture-session-text anonymousCode=fixture-anonymous-text' }));

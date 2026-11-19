@@ -1,4 +1,5 @@
 import { shutdownSignals } from './platform/terminal.mjs';
+import { consoleHost } from './console-address.mjs';
 import fs from 'node:fs';
 import readline from 'node:readline';
 import { parseArgs } from 'node:util';
@@ -576,7 +577,7 @@ async function field({ sub, gridIdx, fleets, allowMutate }) {
     } catch (error) {
       console.log(`warn: 地图资源读取失败 (${error.message})`);
     }
-    const survey = await surveyWorld(client, protocol, { config, player });
+    const survey = await surveyWorld(client, protocol, { config, player, includeProductionTiming: false });
     console.log(formatFieldReport(survey, map));
 
     if (!sub) return;

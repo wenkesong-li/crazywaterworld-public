@@ -104,7 +104,7 @@ export function startGiftCodes(id,input,dispatch,shared={stop:''},options={}) {
               Object.assign(r,{status:'unknown',detail:'未取得可核对的奖励回包，请核对游戏内记录'});stop='前一码结果待确认，尚未发送';
             }
           }
-        }));
+        }), { shouldStart: () => !shared.stop && options.shouldContinue?.() !== false && !publicGiftCodes.isExpired(r.code) });
       }catch(error){
         if(r.status==='queued')Object.assign(r,{status:'skipped',detail:'账号连接不可用（'+error.message+'），尚未发送'});
         stop='批次中断，尚未发送';

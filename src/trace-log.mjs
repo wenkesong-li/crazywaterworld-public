@@ -16,6 +16,7 @@ export function traceJson(value) {
   return JSON.stringify(value, function (key, item) {
     const normalizedKey = key.replace(/[_-]/g, '');
     if (secretKey.test(normalizedKey) || (normalizedKey.toLowerCase() === 'code' && typeof item === 'string')) return '[已脱敏]';
+    if (typeof item === 'string' && (['frameid', 'gestureid'].includes(normalizedKey.toLowerCase()) || /^data:image\//i.test(item))) return '[已脱敏]';
     if (typeof item === 'string') return redactText(item);
     if (typeof item === 'bigint') return item.toString();
     if (item instanceof Error) return { name: item.name, message: redactText(item.message), stack: redactText(item.stack ?? '') };

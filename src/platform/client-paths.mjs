@@ -2,28 +2,25 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-function directories(root) {
+function directoryEntries(root, platform = process.platform) {
   try {
-    return fs.readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name);
+    return fs.readdirSync(root, { withFileTypes: true });
   } catch (error) {
     if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return [];
-    // macOS 隐私权限拦截读取微信容器等目录时，给出带换行和命令高亮的解决步骤；
-    // 终端直接输出可看到高亮，运行日志管道会剥掉控制字符后按多行展示。
-    if (error.code === 'EPERM' || error.code === 'EACCES') {
-      const cmd = text => `\u001b[1;36m${text}\u001b[0m`;
+    if (platform === 'darwin' && ['EPERM', 'EACCES'].includes(error.code)) {
       throw new Error([
-        `无权读取 ${root}（macOS 隐私权限拦截）。两种解决方式任选其一：`,
-        '',
-        '方式一 · 授权后自动读取：',
-        `  ${cmd('open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"')}`,
-        '  在打开的「完全磁盘访问权限」面板中添加当前终端，完全退出（Cmd+Q）并重开终端后再次启动。',
-        '',
-        '方式二 · 跳过微信缓存，直接指定协议包：',
-        `  ${cmd('CW_PROTO_BUNDLE=<协议包路径>/_src_chunks_.wxapkg ./start.command')}`,
+        `无权读取微信缓存目录：${root}`,
+        'macOS 可能限制了当前终端的文件访问。请在系统设置 → 隐私与安全性 → 完全磁盘访问中添加当前终端，然后完全退出并重新打开终端。',
+        '也可使用自备协议包启动：CW_PROTO_BUNDLE="/绝对路径/_src_chunks_.wxapkg" npm start',
+        '离线配置表可通过 CW_CONFIG_PACK 指定。',
       ].join('\n'), { cause: error });
     }
     throw error;
   }
+}
+
+function directories(root, platform) {
+  return directoryEntries(root, platform).filter(entry => entry.isDirectory()).map(entry => entry.name);
 }
 
 export function wechatUsersDirectory({ env = process.env, home = os.homedir(), platform = process.platform } = {}) {
@@ -38,9 +35,9 @@ export function wechatUsersDirectory({ env = process.env, home = os.homedir(), p
 export function wechatPackageCandidates(appId, options) {
   const users = wechatUsersDirectory(options);
   const candidates = [];
-  for (const user of directories(users)) {
+  for (const user of directories(users, options?.platform)) {
     const root = path.join(users, user, 'applet', 'packages', appId);
-    for (const version of directories(root).filter(name => /^\d+$/.test(name))) {
+    for (const version of directories(root, options?.platform).filter(name => /^\d+$/.test(name))) {
       const file = path.join(root, version, '_src_chunks_.wxapkg');
       const complete = fs.existsSync(file);
       // Strict consumers must notice a newer installed main package even if
@@ -59,19 +56,15 @@ export function wechatPackageCandidates(appId, options) {
 
 export function wechatCacheDirectories(appId, options) {
   const users = wechatUsersDirectory(options);
-  return directories(users).map(user => path.join(users, user, 'applet', 'local', appId, 'usr', 'gamecaches'));
+  return directories(users, options?.platform).map(user => path.join(users, user, 'applet', 'local', appId, 'usr', 'gamecaches'));
 }
 
 export function wechatConfigCandidates(appId, options) {
   const found = [];
   for (const cache of wechatCacheDirectories(appId, options)) {
     const directory = path.join(cache, 'config_cn');
-    try {
-      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-        if (entry.isFile() && entry.name.endsWith('.json')) found.push(path.join(directory, entry.name));
-      }
-    } catch (error) {
-      if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error;
+    for (const entry of directoryEntries(directory, options?.platform)) {
+      if (entry.isFile() && entry.name.endsWith('.json')) found.push(path.join(directory, entry.name));
     }
   }
   return found;

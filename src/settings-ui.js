@@ -164,13 +164,27 @@ const configGroups = [
     configField('guildFort.reserve','捐赠后库存保留','number'),configField('guildFort.dailyLimit','每日捐赠上限','number',{help:'0 表示不额外限制，仍遵守游戏日上限。'}),
   ]},
   {id:'resourceFields',title:'资源田',category:'world',fields:[
-    configField('resourceFields.enabled','自动补满资源田空位','switch',{help:'仅派遣到本盟城市内自己尚未占领的资源田，每次检查最多派一队。已满额时等待，不自动放弃已有资源田。'}),
-    configField('resourceFields.preferredResource','优先资源','choice',{options:[['汽油','汽油'],['种子','种子'],['公会科技点','科技点']],help:'优先选择该类资源，同类按基础小时产出从高到低选择。没有符合条件的优先资源时可选择其他类型。'}),
+    configField('resourceFields.enabled','自动占领资源田','switch'),
+    configField('resourceFields.refillAfterLoss','失地后自动补齐','switch',{help:'已占田从本人列表消失，或因城池失守而停产时，开启此项会按当前比例或配额重新占田。关闭时保留失地造成的缺口，仍可首次占田或使用新增名额。'}),
+    configField('resourceFields.allocationMode','名额分配','radio',{
+      options:[['ratio','按比例'],['quota','按配额']],
+      help:'按比例时，三种资源按权重分配总名额，取整后剩余名额优先分给权重较高的资源。按配额时，分别设置每种资源要占的块数。',
+    }),
+    ...[['fuel','汽油'],['seeds','种子'],['tech','科技点']].flatMap(([key, label]) => [
+      configField('resourceFields.ratios.' + key, label + '比例', 'number', {
+        when: draft => draft.resourceFields.allocationMode === 'ratio',
+        help:'填写相对权重。设为 0 时，此资源的名额由其他有权重的资源分配。',
+      }),
+      configField('resourceFields.quotas.' + key, label + '配额', 'number', {
+        when: draft => draft.resourceFields.allocationMode === 'quota', unit:'块',
+        help:'填写此资源的目标块数。设为 0 时不再派遣舰队占领此类田地。',
+      }),
+    ]),
     configField('resourceFields.fleetIds','参与舰队','multi',{catalog:'expeditionFleets',empty:'请选择参与占领的舰队，空选不派遣',help:'只使用已编队、空闲且没有待确认任务的舰队，遵守舰队调度顺序与城战预留。'}),
     configField('resourceFields.minDurabilityPercent','最低耐久','number',{unit:'%',help:'占领需要战斗；舰队需达到耐久门槛及田地推荐战力。出征返航后仍未确认占领时，当日暂停自动占田。'}),
     configField('resourceFields.reserveFleetCount','保留空闲舰队','number',{unit:'队',help:'派遣后至少保留此数量的可用空闲舰队给其他任务。设为 0 可使用所有符合条件的舰队。'}),
-    configField('resourceFields.minLevel','最低资源田等级','number',{help:'只选择达到此等级且基础产出已同步的资源田。'}),
-    configField('resourceFields.checkEverySeconds','检查间隔','number',{unit:'秒',help:'挂机运行时按此间隔检查；总览手动刷新不会触发自动派遣。'}),
+    configField('resourceFields.minLevel','最低资源田等级','number',{help:'从最高等级开始选田，高级田不足时逐级向下选择，直到此等级。'}),
+    configField('resourceFields.checkEverySeconds','检查间隔','number',{unit:'秒',help:'每次检查都会查找可占的高级田。需要更换时，先放弃旧田，再派舰队占领新田。'}),
   ]},
   {id:'silicon',title:'硅矿',category:'world',fields:[
     configField('silicon.enabled','硅矿自动化总开关','switch',{help:'按真实赛季与功能解锁条件运行。奖励由服务器自动结算；一般每10分钟检查，追击或追杀每2分钟，相关推送提前唤醒。'}),
@@ -227,13 +241,13 @@ const configGroups = [
     configField('building.maxUpgrades', '每轮最多升级', 'number', { parent: 'building.upgrade', unit: '座', help: '包含为订单升级的工厂，填 0 时本轮不升级。' }),
   ] },
   { id: 'factory', title: '工厂', category: 'base', fields: [
-    configField('factory.enabled', '总开关'), configField('factory.gain', '自动领取产品'), configField('factory.produce', '自动生产', 'switch', { help: '控制工具普通排产。先核对库存、待收、在产和原料，再按空余制造位连续安排一批；同等需求优先级下先排耗时短的产品。' }),
+    configField('factory.enabled', '总开关'), configField('factory.gain', '自动领取产品'), configField('factory.produce', '自动生产', 'switch', { help: '按原料、库存、在产和待收数量填充空余队列格。已建成的工厂升级时仍可生产当前等级的配方。' }),
     configField('factory.cooperateNative', '按需求调整游戏自动生产目标', 'switch', { help:'只控制游戏中已开启的原生自动生产目标；关闭后，普通排产仍由“自动生产”和“按需优先生产”控制。开启时补齐种子及上游需求，保留正在生产队列，目标调整后回读确认并间隔至少60秒，不购买材料。' }),
     configField('factory.disabledTypes', '禁用工厂', 'multi', { catalog: 'factories', empty: '未选择，允许全部工厂', help: '控制台不再新增生产或加速，已完成产品仍按领取开关处理。游戏内已有的原生自动生产设置保持原状。' }),
     configField('factory.keepStock', '备货水位', 'number', { unit: '件 / 产品', help: '计入库存、待领取与在产数量，实际不超过游戏仓库上限。0 表示只为需求生产。' }),
     configField('factory.checkEverySeconds', '兜底检查间隔', 'number', { unit: '秒', help: '优先按服务端完工时间和建筑状态推送领取、补产；没有可靠完工时间、缺料、满仓或发生错误时，按此间隔复查。独立于主循环间隔；账号队列占用时等待。' }),
-    configField('factory.demandFirst', '按需优先生产', 'switch', { help: '开启后先补所选需求来源，同等优先级先排耗时短的产品；关闭后普通排产只按备货水位从短到长补库存。联盟募兵、红船的独立备料开关仍各自生效。' }),
-    configField('factory.demandPriority', '需求优先级', 'priority', { wide: true, help: '按列表顺序优先补料。勾选“工厂加速”后，会加速该来源仍缺少的在产物品；移除的来源不会自动补回。' }),
+    configField('factory.demandFirst', '按需优先生产', 'switch', { help: '开启后先补所选需求来源。同级需求先选耗时短的产品，有效月卡开启双生产位时可调整同批顺序以缩短工期。关闭后按备货水位从短到长补库存。联盟募兵、红船的独立备料开关仍各自生效。' }),
+    configField('factory.demandPriority', '需求优先级', 'priority', { wide: true, help: '按列表顺序优先补料。开启按需优先生产并选择海兽进阶后，同轮进阶投喂、培育喂养和博物馆也按此顺序使用材料。勾选“工厂加速”后，会加速该来源仍缺少的在产物品；移除的来源不会自动补回。' }),
     configField('factory.speedUp', '自动加速生产', 'switch', { help: '与按来源加速独立；两种方式都遵守加速器保留量。' }),
     configField('factory.speedUpItems', '加速物品', 'multi', { parent: 'factory.speedUp', catalog: 'materials', empty: '未选择，允许全部在产物品', when: d => d.factory.speedUp }),
   ] },
@@ -328,11 +342,11 @@ const configGroups = [
     configField('resources.diamondDailyLimit', '每日钻石使用量', 'number', { parent: 'resources.allowDiamonds', unit: '钻石', help: '0 表示禁止自动花钻石。统计启用本版本后的自动消费，升级前与游戏内手动消费不计入。北京时间零点重置；结果不明的已发送消费仍占额度。' }),
   ] },
   { id: 'gold', title: '每日点金', category: 'base', fields: [
-    configField('gold.enabled', '每日付费点金'), configField('gold.times', '点金次数', 'number', { unit: '次 / 天', help: '按游戏当天已付费次数补足目标，包含手动次数；免费点金不计入。结果不明的请求保留次数与钻石额度。' }),
+    configField('gold.enabled', '每日付费点金'), configField('gold.times', '点金次数', 'number', { unit: '次 / 天', help: '请先用完当天的免费点金，可手动使用或开启免费点金挂机。这个目标只统计付费次数，包含手动付费。上笔结果待确认时会保留额度，暂停追加。' }),
   ] },
   { id: 'treasure', title: '万吨巨轮', category: 'world', fields: [
     configField('treasure.enabled', '巨轮自动化总开关', 'switch', { help: '开始挂机后生效，独立于基地自动化。按所选舰队、参与模式和实际汽油库存出征；耐久不足可先普通维修。不会召回、补油或修改编队。' }),
-    configField('treasure.onlyTenThousand', '只抢万吨货轮', 'switch', { help: '开启后，普通规则仅参加游戏标记为橙色品质的万吨货轮，常规参加和跟随均遵守。关闭后，普通规则也可参加游戏配置已确认的小型、中型货轮，其他筛选仍有效。另行开启下方中小货轮兜底后，可在设定时刻按兜底规则补足领奖次数。' }),
+    configField('treasure.qualities', '常规参与货轮类型', 'multi', { catalog: 'treasureQualities', selectAll: true, empty: '未选择，暂停常规派遣和跟随', help: '勾选常规自动参加和跟随时可以抢的货轮类型，可多选。中小货轮兜底按下方设置，独立选择货轮。' }),
     configField('treasure.autoJoin', '常规自动参加', 'switch', { when:d=>!d.treasure.follow, help:'仅在未开启指定跟随时生效。开启跟随后，首次出征必须匹配名单，不使用常规自动参加兜底；已确认的跟随按反复攻占设置接续。' }),
     configField('treasure.participationMode', '参与模式', 'radio', { options: [['untilFull', '打满就停'], ['always', '每次参与']], help: '打满就停：达到游戏今日领奖上限后不再派遣或维修。每次参与：领奖已满仍可参加，但不增加奖励次数，其他限制仍有效。' }),
     configField('treasure.repeatAttack', '反复攻占', 'switch', { help: '已确认出征后，被打回或返航且回到主城空闲时，可再次参与同一货轮。开启跟随后，由“跟随后续出征方式”决定是否重新匹配跟随玩家；关闭反复攻占时，即使重新匹配也不会再次参与同一货轮。请求结果未知时继续等待确认。' }),
@@ -341,13 +355,13 @@ const configGroups = [
     configField('treasure.fleetIds', '参与舰队', 'multi', { catalog: 'expeditionFleets', empty: '请选择参与舰队，空选不派遣', help: '只使用已建成、有英雄编队且实际空闲的舰队；行军、战斗、维修和驻外等占用会跳过。游戏自动作战开关开启不等于正在作战。' }),
     configField('treasure.followPlayerIds', '跟随名单', 'players', { parent: 'treasure.follow', when: d => d.treasure.follow, help: '从当前账号的盟友名单搜索多选，按选择顺序优先跟随。使用完整角色 ID 区分同名玩家；也可补充未列出的角色 ID。未列出的已选 ID 仍保留，需要时手动移除。' }),
     configField('treasure.followNames', '补充跟随昵称（可选）', 'names', { parent: 'treasure.follow', when: d => d.treasure.follow, help: '保留原有手填名单。每行一个完整昵称，角色 ID 名单优先；同名无法确认身份时跳过。', placeholder: '每行输入一位其他玩家的完整昵称' }),
-    configField('treasure.rewardItems', '目标奖励', 'multi', { catalog: 'treasureRewards', empty: '不筛选奖励', help: '优先显示实际货轮奖励，也可搜索完整物品名称。“垃圾袋（任意品质）”匹配游戏配置中的各品质垃圾袋，选择“传说垃圾袋”等具体品质则仅匹配该品质。选择后只参加含任一所选奖励的货轮，同时遵守“只抢万吨货轮”；跟随模式也遵守此项。' }),
-    configField('treasure.fallbackEnabled', '中小货轮兜底', 'switch', { help: '默认关闭。开始挂机并开启巨轮自动化后，优先参加符合普通规则的货轮。到指定时刻，今日领奖未达兜底目标且该舰队没有符合普通规则的目标时，按下方顺序选择中小货轮。关闭“只抢万吨货轮”时，普通规则仍可全天参加中小货轮。兜底使用独立奖励筛选，可在未匹配跟随名单时参与，仍遵守避战、外盟权限、进度、耐久、实际汽油库存和出征上限。' }),
+    configField('treasure.rewardItems', '目标奖励（任一匹配）', 'multi', { catalog: 'treasureRewards', empty: '不筛选奖励', help: '自动参加和跟随时，货轮含任一勾选奖励即符合奖励条件。留空接受所有奖励。可搜索完整物品名称。“垃圾袋（任意品质）”匹配各品质垃圾袋，选择具体品质则只匹配该品质。' }),
+    configField('treasure.fallbackEnabled', '中小货轮兜底', 'switch', { help: '到达兜底开始时间后，若今日领奖未达目标且舰队没有符合常规规则的货轮，按下方设置的货轮类型和奖励优先级派遣。即使常规类型留空或跟随名单未命中也可兜底，仍遵守避战、外盟权限、进度、耐久、汽油库存和出征上限。' }),
     configField('treasure.fallbackAfter', '兜底开始时间', 'time', { parent: 'treasure.fallbackEnabled', when: d => d.treasure.fallbackEnabled, help: '按北京时间每天从此时刻检查至当天结束。请按所在区服最后一轮万吨时间设置，默认 21:00。' }),
     configField('treasure.fallbackTargetRewards', '兜底领奖目标', 'number', { parent: 'treasure.fallbackEnabled', when: d => d.treasure.fallbackEnabled, unit: '次 / 天', help: '以服务器今日已领奖次数为准，最多补至游戏每日领奖上限。达到目标后停止中小货轮兜底，“每次参与”模式也遵守此目标。' }),
     configField('treasure.fallbackQualities', '兜底货轮优先级', 'priority', { parent: 'treasure.fallbackEnabled', when: d => d.treasure.fallbackEnabled, options: [['PURPLE', '中型货轮'], ['BLUE', '小型货轮']], itemLabel: '货轮类型', empty: '请选择至少一种兜底货轮。', help: '按列表从上到下选择类型，可移除不参加的类型。每种类型内再按对应奖励优先级匹配。' }),
-    configField('treasure.fallbackMediumRewardPriority', '中型货轮奖励优先级', 'priority', { parent: 'treasure.fallbackQualities', when: d => d.treasure.fallbackEnabled && d.treasure.fallbackQualities.includes('PURPLE'), catalog: 'treasureRewards', itemLabel: '奖励', empty: '未筛选奖励，按货轮整体进度优先。', help: '按列表从上到下匹配奖励。添加后只参加含任一所选奖励的中型货轮，清空后接受所有奖励。“垃圾袋（任意品质）”匹配各品质垃圾袋。' }),
-    configField('treasure.fallbackSmallRewardPriority', '小型货轮奖励优先级', 'priority', { parent: 'treasure.fallbackQualities', when: d => d.treasure.fallbackEnabled && d.treasure.fallbackQualities.includes('BLUE'), catalog: 'treasureRewards', itemLabel: '奖励', empty: '未筛选奖励，按货轮整体进度优先。', help: '按列表从上到下匹配奖励。添加后只参加含任一所选奖励的小型货轮，清空后接受所有奖励。“垃圾袋（任意品质）”匹配各品质垃圾袋。' }),
+    configField('treasure.fallbackMediumRewardPriority', '中型货轮奖励优先级（任一匹配）', 'priority', { parent: 'treasure.fallbackQualities', when: d => d.treasure.fallbackEnabled && d.treasure.fallbackQualities.includes('PURPLE'), catalog: 'treasureRewards', checkboxes: true, empty: '不筛选奖励', help: '中型货轮含任一勾选奖励即符合兜底奖励条件。多艘符合时，优先选择含排名靠前奖励的货轮。留空接受所有奖励。' }),
+    configField('treasure.fallbackSmallRewardPriority', '小型货轮奖励优先级（任一匹配）', 'priority', { parent: 'treasure.fallbackQualities', when: d => d.treasure.fallbackEnabled && d.treasure.fallbackQualities.includes('BLUE'), catalog: 'treasureRewards', checkboxes: true, empty: '不筛选奖励', help: '小型货轮含任一勾选奖励即符合兜底奖励条件。多艘符合时，优先选择含排名靠前奖励的货轮。留空接受所有奖励。' }),
     configField('treasure.avoidNames', '避战玩家名称', 'names', { help: '每行填写一位玩家的完整昵称，按名称完全匹配，同名玩家都会避开。只判断货轮当前守军和战斗者；历史排名中已离开的玩家不会单独触发。避战优先于跟随。', placeholder: '每行输入一位玩家的完整昵称' }),
     configField('treasure.avoidPlayerIds', '已有避战角色 ID', 'names', { when: d => d.treasure.avoidPlayerIds.length > 0, help: '保留此前保存的精确角色 ID，每行一个。可删除不再需要的条目；新玩家请在上方填写名称。', placeholder: '每行一个已有的完整角色 ID' }),
     configField('treasure.allowHostile', '允许争夺其他联盟货轮', 'switch', { help: '默认关闭，只参与无人占领或本联盟货轮。开启后可能与其他联盟交战，跟随名单也受此开关约束。' }),
@@ -397,19 +411,17 @@ const configGroups = [
     configField('schedule.guildTitleReward', '联盟每日职级礼包', 'switch', { help:'默认关闭。按服务器提供的可领取职级核对每日礼包，不以当前职位替代；确认奖励回执及当日领取时间后才记为成功。' }),
     configField('schedule.worldOnlineRewards', '领取城战在线奖励', 'switch', { help: '在服务器城战时段内，按实际计时逐档领取免费在线奖励。独立于下方城战接续开关；默认关闭，保存后随挂机检查，不自动启动挂机。请求结果未知时等待计数确认，不重复领取。' }),
     configField('cityWar.enabled', '城战接续总开关', 'switch', { help: '按下方原生委任次数决定何时接续正常出战，每支参与舰队可指定进攻或防守。下方预览范围选择“联盟城战”；不会宣战或改变集结目标。' }),
-    configField('fleetSpeed.enabled','维修及派遣钻石加速总开关','switch',{help:'默认关闭，需开启联盟城战和“基础 → 加速与钻石”中的自动钻石消耗总开关。关闭时下方逐队加速均不执行；开启后仍按每队勾选项和预算检查。仅处理所选城战舰队的城战行军及现有维修（含手动维修）；不加速返航、巨轮、硅矿行军或其他玩法已确认发起的维修。'}),
     configField('cityWar.fleetIds', '城战参与舰队', 'multi', { catalog: 'expeditionFleets', empty: '请选择参与接续的舰队' }),
-    configField('cityWar.defenceFleetIds', '舰队职责与策略', 'cityWarRoles', { parent: 'cityWar.fleetIds', wide: true, help: '为已选舰队分别选择进攻或防守；展开后可设置本队策略、维修加速和派遣加速。策略可跟随全局，也可独立设置目标来源、城市和优先策略。加速还需开启上方的维修及派遣钻石加速总开关，并遵守每队每项上限与“基础 → 加速与钻石”中的全局钻石预算。切换职责保留本队另一套策略；新加入的舰队默认进攻。进攻只选择本盟已宣战且仍属于敌方的城市，防守只选择被宣战且仍属于本盟的城市；没有对应目标时等待，不自动换职责。使用舰队已保存的英雄编队，不自动换阵。职责仅约束工具接管后的派遣；要立即按此分工执行，将原生委任次数设为 0。' }),
+    configField('cityWar.defenceFleetIds', '舰队职责与策略', 'cityWarRoles', { parent: 'cityWar.fleetIds', wide: true, help: '为已选舰队分别选择进攻或防守；展开后可设置本队策略、维修加速和派遣加速。策略可跟随全局，也可独立设置目标来源、城市和优先策略。加速需开启城战接续和“基础 → 加速与钻石”中的自动钻石消耗总开关，每队每项上限与全局钻石预算同时生效。切换职责保留本队另一套策略；新加入的舰队默认进攻。进攻只选择本盟已宣战且仍属于敌方的城市，防守只选择被宣战且仍属于本盟的城市；没有对应目标时等待，不自动换职责。使用舰队已保存的英雄编队，不自动换阵。职责仅约束工具接管后的派遣；要立即按此分工执行，将原生委任次数设为 0。' }),
     configField('cityWar.nativeCommissionLimit', '原生委任次数', 'number', { unit: '次', help: '-1 表示按服务器 VIP 规则等待额度用尽。0 表示关闭所选舰队的原生委任，由工具立即接续。N 表示先让原生委任使用 N 次（不超过 VIP 额度），再关闭开关并由工具接续。原生委任跟随联盟集结，攻守职责与各自目标配置在工具接管后生效。需要立即按设置执行时设为 0，工具会先回读确认关闭。' }),
     configField('cityWar.targetMode', '进攻目标来源', 'choice', { options: [['alliance', '跟随联盟有效进攻目标'], ['selected', '只选择指定城市']], help: '进攻队使用本组目标来源、城市和优先策略。目标须为本盟已宣战且当前属于敌方的城市。攻守目标设置在工具接管后生效，需要立即执行时将原生委任次数设为 0。' }),
-    configField('cityWar.targetPriority', '进攻目标优先', 'choice', { options: [['fewestAllied', '按队数与距离选择'], ['original', '沿用集结／指定城市顺序']], help: '按攻方队列、本盟正在交战和已同步在途舰队总数选城，本轮安排也计入。以队数最少的城为基准，相差 0–9 队时选较近目标，差 10 队及以上时优先队列较少的城。多联盟同攻时进攻人数无法拆分，或数量无法确认时跳过。发送前重新核对。' }),
+    configField('cityWar.targetPriority', '进攻目标优先', 'choice', { options: [['fewestAllied', '按队数与距离选择'], ['original', '沿用集结／指定城市顺序']], help: '合计本盟排队、交战、已同步在途和本轮安排的舰队。以队数最少的城为基准，相差 0–9 队时选较近目标，差 10 队及以上时优先队数较少的城。多盟同攻时，攻方队列为空或排队明细与总数吻合即可确认本盟排队数。队数不明时，按队数选城会跳过该城，按集结或指定顺序仍可派舰。发送前重新核对。' }),
     configField('cityWar.cityRefs', '指定进攻城市', 'multi', { parent: 'cityWar.targetMode', catalog: 'cityTargets', empty: '请选择当前场景的进攻城市', when: d => d.cityWar.targetMode === 'selected', help: '进攻队在本名单内选择有效目标。启用队数与距离优先时按上述规则排序，勾选顺序用于同条件时的次序。场景不匹配、未宣战或城市归属不符合进攻职责时跳过，没有有效目标时等待。' }),
     configField('cityWar.defenceTargetMode', '防守目标来源', 'choice', { options: [['alliance', '跟随联盟有效防守目标'], ['selected', '只选择指定城市']], help: '防守队使用本组目标来源、城市和优先策略，可与进攻队分别选择自动选城或指定城市。目标须为正在受宣战且当前属于本盟的城市。' }),
     configField('cityWar.defenceTargetPriority', '防守目标优先', 'choice', { options: [['fewestAllied', '按队数与距离选择'], ['original', '沿用集结／指定城市顺序']], help: '按守方队列、本盟正在交战和已同步在途舰队总数选城，本轮安排也计入。守方队列采用服务器计数，可能包含城防 NPC。以队数最少的城为基准，相差 0–9 队时选较近目标，差 10 队及以上时优先队列较少的城。数量无法确认时跳过。防守己城行军汽油为 0，远近按实际距离比较，发送前重新核对。' }),
     configField('cityWar.defenceCityRefs', '指定防守城市', 'multi', { parent: 'cityWar.defenceTargetMode', catalog: 'cityTargets', empty: '请选择当前场景的防守城市', when: d => d.cityWar.defenceTargetMode === 'selected', help: '防守队在本名单内选择有效目标。启用队数与距离优先时按上述规则排序，勾选顺序用于同条件时的次序。场景不匹配、未受宣战或城市归属不符合防守职责时跳过，没有有效目标时等待。' }),
     configField('cityWar.autoRepair', '耐久不足时维修', 'switch', { help: '仅正常维修；按服务器返回的完整维修报价核对实际汽油库存，维修完成后再出战。' }),
     configField('cityWar.repairBelowPercent', '低于此耐久比例先维修', 'number', { unit: '%', help: '还须达到游戏配置的城战基础耐久门槛；实际扣除随交战对象变化，不保证每场只扣基础值。已在行军、战斗、维修、驻外或其他任务中的舰队不被抢占。' }),
-    configField('cityWar.dailyDispatchLimit', '每日工具接续出战上限', 'number', { unit: '次', help: '至少1次，不包含游戏原生委任次数。原生额度按账号真实 VIP 规则读取，不固定为4；上方原生委任次数设为 0 时，工具会先关闭所选舰队的原生委任。' }),
     configField('cityWar.reserveDuringWar', '城战期间为所选舰队保留任务', 'switch', { help: '城战时段存在符合舰队职责的有效目标时，为对应舰队保留任务；没有防守目标时不预留防守队，没有进攻目标时不预留进攻队。已在执行巨轮或其他任务的舰队等待空闲，不主动召回。' }),
     configField('cityWar.checkEverySeconds', '城战检查间隔', 'number', { unit: '秒' }),
 
@@ -1627,7 +1639,6 @@ function configCityWarRoles(spec, id) {
       for (const state of entry.speedStates) {
         const issues = [];
         if (!configGet('cityWar.enabled')) issues.push(['cityWar.enabled', '城战接续总开关已关闭']);
-        if (!configGet('fleetSpeed.enabled')) issues.push(['fleetSpeed.enabled', '维修及派遣钻石加速总开关已关闭']);
         if (!configGet('resources.allowDiamonds')) issues.push(['resources.allowDiamonds', '全局自动钻石消耗已关闭']);
         if (!(configGet('resources.diamondDailyLimit') > 0)) issues.push(['resources.diamondDailyLimit', '全局每日钻石预算为 0']);
         if (!(configGet(state.key + 'DailyDiamonds') > 0)) issues.push([state.key + 'DailyDiamonds', '本项每日钻石上限为 0']);
@@ -1676,11 +1687,18 @@ function configMultiselect(spec, id, options = {}) {
       ? '旧配置曾允许培养全部英雄，请重新选择' : spec.empty || '请选择';
     summary.textContent = names.length ? names.slice(0, 2).join('、') + (names.length > 2 ? ' 等 ' + names.length + ' 项' : '') : empty;
   }
+  function paintFooter(available, matchCount, selected) {
+    const selectedCount = available.filter(item => selected.has(item.value)).length;
+    count.textContent = '已选 ' + selectedCount + ' 项 · 匹配 ' + matchCount + ' 项';
+    reset.disabled = disabled || selected.size === 0;
+    if (selectAll) selectAll.disabled = disabled || selectedCount === available.length;
+  }
   function paintList() {
     const oldScroll = list.scrollTop; clear(list);
     const query = search.value.trim().toLocaleLowerCase();
-    const matches = all().filter(item => (item.label + ' ' + item.value).toLocaleLowerCase().includes(query));
-    const selected = new Set(read().filter(value=>spec.catalog!=='expeditionFleets'||all().some(item=>item.value===value)));
+    const available = all();
+    const matches = available.filter(item => (item.label + ' ' + item.value).toLocaleLowerCase().includes(query));
+    const selected = new Set(read());
     for (const item of matches.slice(0, limit)) {
       const label = el('label', 'config-option'); const input = el('input'); input.type = 'checkbox'; input.checked = selected.has(item.value); input.disabled = disabled;
       input.onchange = () => {
@@ -1688,12 +1706,12 @@ function configMultiselect(spec, id, options = {}) {
         const values = read();
         write(input.checked ? [...values, item.value] : values.filter(value => value !== item.value));
         if (spec.key === 'heroes.heroIds' && item.hidden && !input.checked) { paintSummary(); paintList(); return; }
-        paintSummary(); count.textContent = '已选 ' + read().filter(value=>all().some(item=>item.value===value)).length + ' 项 · 匹配 ' + matches.length + ' 项';
+        paintSummary(); paintFooter(available, matches.length, new Set(read()));
       };
       label.append(input, el('span', '', item.label)); list.append(label);
     }
     if (!matches.length) list.append(el('p', 'config-help', '没有匹配项，试试其他名称。'));
-    count.textContent = '已选 ' + selected.size + ' 项 · 匹配 ' + matches.length + ' 项';
+    paintFooter(available, matches.length, selected);
     more.hidden = matches.length <= limit; list.scrollTop = oldScroll;
   }
   search.oninput = () => { limit = 120; paintList(); };
@@ -1702,13 +1720,24 @@ function configMultiselect(spec, id, options = {}) {
     else root.classList.remove('open-up');
   };
   root.onkeydown = event => { if (event.key === 'Escape') { root.open = false; summary.focus(); event.stopPropagation(); } };
-  const reset = configButton('清空选择', () => { if (!disabled) { write([]); paintSummary(); paintList(); } });
-  reset.disabled = disabled; foot.append(count);
-  if (spec.selectAll) {
-    const selectAll = configButton('全选', () => { if (!disabled) { write(all().map(item => item.value)); paintSummary(); paintList(); } });
-    selectAll.setAttribute('aria-label', '全选' + spec.label); selectAll.disabled = disabled; foot.append(selectAll);
+  const actions = el('div', 'config-select-foot-actions');
+  function applySelection(values, button) {
+    if (disabled || button.disabled) return;
+    const focused = button.ownerDocument?.activeElement === button;
+    write(values); paintSummary(); paintList();
+    // 操作按钮刚被禁用时，保留菜单的键盘焦点，Escape 仍可收起菜单。
+    if (focused && button.disabled && root.open) {
+      const doc = button.ownerDocument;
+      if (doc.activeElement === button || doc.activeElement === doc.body) summary.focus({ preventScroll: true });
+    }
   }
-  foot.append(reset);
+  const reset = configButton('清空选择', () => applySelection([], reset));
+  const selectAll = spec.selectAll ? configButton('全选', () => applySelection(all().map(item => item.value), selectAll)) : null;
+  if (selectAll) {
+    selectAll.setAttribute('aria-label', '全选' + spec.label);
+    actions.append(selectAll);
+  }
+  actions.append(reset); foot.append(count, actions);
   root.refresh = () => { paintSummary(); if (root.open) paintList(); };
   panel.append(search, list, more, foot); root.append(panel); paintSummary(); return root;
 }
@@ -1718,8 +1747,15 @@ function configPriorityEditor(spec, id) {
   const options = spec.options?.map(([value, label]) => ({ value, label })) ?? configEditor.data.catalog[spec.catalog || 'demandSources'] ?? [];
   const factoryPriority = spec.key === 'factory.demandPriority';
   const itemLabel = spec.itemLabel || '需求来源';
+  const picker = spec.checkboxes ? configMultiselect(spec, id + '-picker', {
+    write(values) { configSet(spec.key, values); paint(); },
+  }) : null;
+  if (picker) root.append(picker);
+  const list = el('ol', 'config-order-list'); root.append(list);
+  const add = picker ? null : el('div', 'config-add');
+  if (add) root.append(add);
   function paint(focusKey, direction) {
-    clear(root); const values = configGet(spec.key); const list = el('ol', 'config-order-list'); let focus;
+    clear(list); const values = configGet(spec.key); let focus;
     values.forEach((value, index) => {
       const label = options.find(item => item.value === value)?.label || value;
       const row = el('li', 'config-order-row'); row.append(el('span', 'config-order-num', String(index + 1)), el('span', 'config-order-name', label));
@@ -1729,25 +1765,27 @@ function configPriorityEditor(spec, id) {
         check.onchange = () => { const current = configGet('factory.speedUpSources'); configSet('factory.speedUpSources', check.checked ? [...current, value] : current.filter(item => item !== value)); };
         speed.append(check, el('span', '', '工厂加速')); tools.append(speed);
       }
-      const move = offset => { const next = [...values]; [next[index], next[index + offset]] = [next[index + offset], next[index]]; configSet(spec.key, next); paint(value, offset); };
+      const move = offset => { const next = [...values]; [next[index], next[index + offset]] = [next[index + offset], next[index]]; configSet(spec.key, next); picker?.refresh(); paint(value, offset); };
       const up = configButton('上移', () => move(-1)); up.disabled = index === 0; up.setAttribute('aria-label', label + '上移');
       const down = configButton('下移', () => move(1)); down.disabled = index === values.length - 1; down.setAttribute('aria-label', label + '下移');
       const remove = configButton('移除', () => {
         configSet(spec.key, values.filter(item => item !== value));
         if (factoryPriority) configSet('factory.speedUpSources', configGet('factory.speedUpSources').filter(item => item !== value));
-        paint();
+        picker?.refresh(); paint();
       }, 'remove'); remove.setAttribute('aria-label', '移除' + label);
       tools.append(up, down, remove); row.append(tools); list.append(row);
       if (value === focusKey) focus = direction === -1 ? up : down;
     });
+    if (focus && !focus.disabled) focus.focus();
+    if (!add) { list.hidden = !values.length; return; }
     if (!values.length) list.append(el('li', 'config-empty', spec.empty || '尚未选择需求来源。当前只按备货水位生产。'));
-    const add = el('div', 'config-add'); const select = el('select', 'config-select'); select.setAttribute('aria-label', '添加' + itemLabel);
+    clear(add); const select = el('select', 'config-select'); select.setAttribute('aria-label', '添加' + itemLabel);
     const available = options.filter(item => !values.includes(item.value));
     const blank = el('option', '', available.length ? '选择要添加的' + itemLabel : '已添加全部' + itemLabel); blank.value = ''; select.append(blank);
     for (const item of available) { const option = el('option', '', item.label); option.value = item.value; select.append(option); }
     const button = configButton('添加', () => { if (select.value) { configSet(spec.key, [...values, select.value]); paint(); } }); button.setAttribute('aria-label', '添加所选' + itemLabel); button.disabled = true;
     select.disabled = !available.length; select.onchange = () => { button.disabled = !select.value; };
-    add.append(select, button); root.append(list, add); if (focus && !focus.disabled) focus.focus();
+    add.append(select, button);
   }
   paint(); return root;
 }
@@ -2100,5 +2138,4 @@ document.addEventListener('toggle', event => {
   place();
 }, true);
 window.addEventListener('cw-console-version-stale', configVersionStale);
-window.addEventListener('beforeunload', event => { if (configIsDirty() || configEditor.saving) { event.preventDefault(); event.returnValue = ''; } });
 window.addEventListener('online', () => { if (configIsDirty() && configEditor.saveError && !configEditor.saveError.fields) { configEditor.saveRetries = 0; configScheduleSave(0); } });

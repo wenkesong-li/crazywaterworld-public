@@ -112,14 +112,9 @@ export function openBrowser(url) {
     child.on('error', onFail);
     child.unref();
   };
-  // 非 Windows 用系统默认打开命令；Windows 优先应用浏览器，cmd start 兜底。
   if (process.platform === 'darwin') {
     launch('open', [url], () => {});
     return 'open';
-  }
-  if (process.platform !== 'win32') {
-    launch('xdg-open', [url], () => {});
-    return 'xdg-open';
   }
   const systemDefault = () => launch('cmd', ['/c', 'start', '', url], () => {});
   const app = findAppBrowser();

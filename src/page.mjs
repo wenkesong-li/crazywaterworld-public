@@ -66,7 +66,7 @@ ${chrome()}
     ${settingsPage()}
   </section>
 
-  <section id="tab-manual" class="hidden">
+  <section id="tab-manual" class="hidden" tabindex="-1" aria-label="建筑一览">
     ${manualPage()}
   </section>
 
@@ -129,32 +129,57 @@ function createConsoleVersionGuard() {
   const reject = () => {
     if (stale) return;
     stale = true;
-    const banner = document.createElement('section'); banner.id = 'console-version-warning'; banner.className = 'config-message';
-    banner.dataset.kind = 'error'; banner.setAttribute('role', 'alert');
-    const text = document.createElement('p'); text.textContent = message; banner.append(text);
-    const actions = document.createElement('div'); Object.assign(actions.style, { display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px' });
-    const action = (label, run) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'config-small-button'; button.textContent = label; button.onclick = run; actions.append(button); return button; };
-    const download = action('下载游戏配置草稿', () => configDownloadDraft()); download.disabled = !configHasDraft();
-    action('刷新页面', () => {
-      if (!window.confirm('刷新会丢弃本页未保存的修改。请先下载游戏配置草稿或复制需要保留的内容，确认已保留后再刷新。')) return;
-      location.reload();
-    });
-    for (const [label, route] of [['停止当前账号挂机', '/api/loop/stop'], ['断开当前账号', '/api/disconnect']]) {
-      const button = action(label, async () => {
-        if (!current) return; button.disabled = true;
-        try { await call(route, { method: 'POST', body: JSON.stringify({ confirm: true }) }); await refreshLoop(); }
-        catch (error) { reportError(error); }
-        finally { button.disabled = !current; }
-      }); button.disabled = !current;
-    }
-    banner.append(actions); (document.querySelector('header') || document.body).prepend(banner);
     window.dispatchEvent(new Event('cw-console-version-stale'));
+    showStalePageDialog();
   };
   const observe = value => { if (value && value !== version) reject(); };
   return Object.freeze({ version, message, isStale: () => stale, observe, reject,
     check(response, data) { observe(response?.headers?.get('X-CW-Console-Version')); if (data?.code === 'CLIENT_VERSION_MISMATCH') reject(); return !stale; },
     assertWritable(path, method = 'POST') { if (stale && !allowed(path, method)) throw failure(); },
   });
+}
+
+let stalePageReloadRequested = false;
+function showStalePageDialog() {
+  const dialog = $('console-version-warning'), opener = $('console-version-open');
+  const download = $('console-version-download'), accountActions = $('console-version-account');
+  const result = $('console-version-result');
+  function open() {
+    download.hidden = !configHasDraft();
+    accountActions.hidden = !current;
+    accountActions.open = false;
+    result.textContent = '';
+    dialog.showModal();
+  }
+  opener.hidden = false;
+  opener.onclick = open;
+  $('console-version-dismiss').onclick = () => dialog.close();
+  download.onclick = () => configDownloadDraft();
+  $('console-version-reload').onclick = () => {
+    stalePageReloadRequested = true;
+    location.reload();
+  };
+  for (const [id, route, success] of [
+    ['console-version-stop', '/api/loop/stop', '当前账号已停止挂机。'],
+    ['console-version-disconnect', '/api/disconnect', '当前账号已断开。'],
+  ]) {
+    const button = $(id);
+    button.onclick = async () => {
+      const account = current;
+      if (!account || button.disabled) return;
+      button.disabled = true;
+      result.textContent = '';
+      try {
+        await call(route, { method: 'POST', body: JSON.stringify({ confirm: true }) });
+        if (account === current) result.textContent = success;
+        await refreshLoop();
+      } catch (error) {
+        if (account === current) result.textContent = error.message;
+        reportError(error);
+      } finally { button.disabled = false; }
+    };
+  }
+  open();
 }
 window.cwConsoleVersion = createConsoleVersionGuard();
 
@@ -216,6 +241,7 @@ async function call(path, options) {
     }
     return data;
   } catch (error) {
+    if (method === 'GET' && opts.signal?.aborted) throw error;
     if (!error.logged) reportError(error, path, account);
     error.logged = true;
     throw error;
@@ -292,8 +318,9 @@ function closeModal() {
   $('modal').close();
   $('m-ok').onclick = null;
 }
-function openConfirm(title, bodyNodes, onOk) {
+function openConfirm(title, bodyNodes, onOk, okLabel = '确认') {
   $('m-title').textContent = title;
+  $('m-ok').textContent = okLabel;
   const body = clear($('m-body'));
   for (const node of bodyNodes) body.appendChild(node);
   $('m-ok').onclick = async () => {
@@ -311,12 +338,6 @@ function openConfirm(title, bodyNodes, onOk) {
 }
 $('m-cancel').onclick = closeModal;
 $('modal').oncancel = event => { event.preventDefault(); closeModal(); };
-function isChecked(control) {
-  return control.getAttribute('aria-checked') === 'true';
-}
-for (const control of document.querySelectorAll('[data-local-switch]')) {
-  control.onclick = () => setTaskSwitch(control, !isChecked(control));
-}
 
 function accountDialog(title, message, value) {
   const dialog = $('account-dialog'), input = $('account-label-input');
@@ -330,17 +351,6 @@ function accountDialog(title, message, value) {
   return new Promise(resolve => {
     dialog.addEventListener('close', () => resolve(dialog.returnValue === 'ok' ? input.value : null), { once: true });
   });
-}
-
-function bindGameAction(id, action) {
-  const button = $(id);
-  button.onclick = async () => {
-    if (!current || button.disabled) return;
-    button.disabled = true;
-    try { await action(); }
-    catch (error) { reportError(error); }
-    finally { button.disabled = false; }
-  };
 }
 
 // ---- 运行记录 --------------------------------------------------------------
@@ -1459,7 +1469,7 @@ $('factory-production-dialog').onclose = () => {
   clear($('factory-production-body'));
   const trigger = [...document.querySelectorAll('[data-factory-production]')]
     .find(button => button.dataset.factoryProduction === factoryId);
-  (trigger || $('world-plan')).focus();
+  (trigger || $('tab-manual')).focus();
 };
 
 function factoryCurrentProduction(factory) {
@@ -1493,13 +1503,18 @@ function factoryCurrentProduction(factory) {
   return current;
 }
 
+function buildingSection(title, className, content) {
+  const section = el('section', className);
+  section.append(el('h2', null, title), content);
+  return section;
+}
+
 function renderWorld(data) {
   stateActions.setGameData(current, 'world', data);
   orderClockOffset=Number.isFinite(data.serverNow)?data.serverNow*1000-Date.now():0;
   $('world-view').textContent = '';
   const fbox = clear($('world-factories'));
   if (data.factories?.length) {
-    fbox.appendChild(el('h2', null, '工厂'));
     const factories = [...data.factories].sort((a, b) => a.buildingId.localeCompare(b.buildingId, 'zh-CN', { numeric: true }));
     const factoryTable = table(['建筑', '类型', '等级', '当前产物', '自动生产', '下一产物'], factories.map((b) => {
       const queueKnown = b.queueKnown !== false && Array.isArray(b.jobs);
@@ -1512,9 +1527,8 @@ function renderWorld(data) {
         b.autoEnabled == null ? '未同步' : b.autoEnabled ? '已开启' : '未开启',
         !queueKnown ? '未同步' : next ? next.name || next.productId || '产物未同步' : '—',
       ];
-    }));
-    factoryTable.classList.add('factory-table');
-    fbox.appendChild(factoryTable);
+    }), 'sea-records');
+    fbox.appendChild(buildingSection('工厂', 'world-factory-section', factoryTable));
   }
   const productionDialog = $('factory-production-dialog');
   if (productionDialog.open) {
@@ -1523,9 +1537,8 @@ function renderWorld(data) {
     else closeFactoryProduction();
   }
   if (data.farms?.length) {
-    fbox.appendChild(el('h2', null, '农田'));
     const plots = [...data.farms].sort((a, b) => a.plot.localeCompare(b.plot, 'zh-CN', { numeric: true }));
-    fbox.appendChild(table(['农田', '等级', '当前作物', '状态与计时'], plots.map((plot) => {
+    const farmTable = table(['农田', '等级', '当前作物', '状态与计时'], plots.map((plot) => {
       let status = plot.status || '未同步';
       if (plot.productId && plot.ripeTime > 0) {
         status = worldProductionTimer(plot.ripeTime, '已成熟', '生长中 · 剩余 ');
@@ -1536,37 +1549,34 @@ function renderWorld(data) {
       }
       return [plot.plot, plot.level == null ? '未同步' : 'lv' + plot.level,
         plot.productName || plot.productId || '—', status];
-    })));
+    }), '');
+    fbox.appendChild(buildingSection('农田', 'world-farm-section', farmTable));
   }
   // 空位：没盖的（待建）与正在盖的（施工中）。计划器只会建「待建」那些，
   // 施工中的只能等它盖完由竣工步骤收尾，所以两种状态要分开说，不然看不出差在哪。
   const slots = (data.buildings || []).filter((b) => b.level === 0);
   if (slots.length) {
-    fbox.appendChild(el('h2', null, '空位'));
-    fbox.appendChild(table(['空位', '类型', '状态'], slots.map((b) => [
+    const slotTable = table(['空位', '类型', '状态'], slots.map((b) => [
       { cell: b.icon, text: b.buildingId },
       b.typeName || b.type || '未知类型',
       b.building ? chip('waiting', '施工中') : b.awaitingFinish ? chip('ready', '待竣工') : chip('ready', '待建'),
-    ])));
+    ]));
+    fbox.appendChild(buildingSection('空位', 'world-slot-section', slotTable));
   }
   const obox = clear($('world-orders'));
   if (data.orders.length) {
     obox.appendChild(el('h2', null, '居民订单'));
     obox.appendChild(el('p', 'dim', '可手动提交材料已齐的订单。账号忙时自动排队，交付结果见运行日志。'));
-    obox.appendChild(table(['订单', '居民', '需求', '挂机交付', '手动操作'], data.orders.map((o) => [
+    const ordersTable = table(['订单', '居民', '需求', '挂机交付', '手动操作'], data.orders.map((o) => [
       '#' + o.index,
       { cell: o.workerIcon, text: (o.workerName || '未知居民') + (o.isSpecial ? '（特殊）' : '') },
       o.requirements.length && o.decision?.status !== 'refreshing' ? { cells: o.requirements } : '—',
       orderState(o, data),
       residentOrderActions(o),
-    ])));
+    ]), 'sea-records');
+    obox.appendChild(ordersTable);
   }
   renderInventory(data.stock);
-  const fields=clear($('world-fields'));fields.append(el('p','dim','已占资源田 '+(data.resFields.fields?.length??'?')+'/'+(data.resFields.maxNum??'?')));
-  const yields=el('div','field-yield-summary');yields.setAttribute('aria-label','资源田每小时基础总产量');for(const item of data.resFields.totals??[])yields.append(el('span','',item.name+' '+(item.perHour===null?'未同步':fmt(item.perHour)+'/小时')));fields.append(yields);
-  if(data.resFields.rows?.length)fields.append(table(['建筑','产出','等级'],data.resFields.rows.map(r=>[r.name+' · '+r.cityName,r.product,r.level??'未同步'])));
-  else fields.append(el('p','dim',data.resFields.fields?.length?'资源田信息未同步，请重新加载服务':'暂无已占资源田'));
-  fields.append(el('p','dim','产出为每小时基础值，不含科技及其他加成。'));
 }
 
 let worldVersion = 0, worldRead = null, displayedWorldAccount;
@@ -1582,44 +1592,26 @@ function refreshManualWorld(force = false) {
     resetInventory();
     worldVersion++;
     worldRead = null;
-    for (const id of ['world-factories', 'world-orders', 'world-stock', 'world-fields', 'world-hint']) clear($(id));
-    $('world-view').textContent = !account ? '请先选择账号' : !available ? '账号已断开连接' : '正在读取海面数据…';
+    for (const id of ['world-factories', 'world-orders', 'world-stock']) clear($(id));
+    if (!available) $('world-view').textContent = account ? '账号已断开连接' : '请先选择账号';
   }
   if (!available || worldRead?.account === account) return;
   const version = ++worldVersion;
   worldRead = { account, version };
-  $('world-hint').textContent = '正在读取…';
-  call('/api/world?speedUp=' + isChecked($('world-speedup'))).then(data => {
+  $('world-view').textContent = '正在读取海面数据…';
+  call('/api/world').then(data => {
     if (version === worldVersion && current === account) renderWorld(data);
   }).catch(error => {
     if (version === worldVersion && current === account) {
       $('inventory-status').textContent='库存读取失败，请重试';
-      $('world-view').textContent = '海面数据读取失败，可点「刷新数据」重试。';
+      $('world-view').textContent = '海面数据读取失败，请重新打开「建筑一览」重试。';
       reportError(error);
     }
   }).finally(() => {
     if (worldRead?.version === version) worldRead = null;
-    if (version === worldVersion) $('world-hint').textContent = '';
   });
 }
 $('inventory-refresh').onclick=()=>refreshManualWorld(true);
-$('world-plan').onclick = () => refreshManualWorld();
-$('world-speedup').onclick = () => { setTaskSwitch($('world-speedup'), !isChecked($('world-speedup'))); refreshManualWorld(true); };
-bindGameAction('world-run', async () => {
-  const account = current;
-  $('world-hint').textContent = '执行中 ...';
-  try {
-    const body = { confirm: true, speedUp: isChecked($('world-speedup')), reroll: isChecked($('world-reroll')) };
-    const data = await call('/api/world/run', { method: 'POST', body: JSON.stringify(body) });
-    if (account !== current || disconnected.has(account)) return;
-    worldVersion++;
-    $('world-hint').textContent = '执行 ' + data.results.length + ' 个动作，失败 ' + data.results.filter((r) => r.ok === false).length;
-    if (!data.refreshError) renderWorld(data);
-  } catch (error) {
-    $('world-hint').textContent = '';
-    reportError(error);
-  }
-});
 
 // ---- 表格 ------------------------------------------------------------------
 // 单元格可以是字符串、{num}、{chip}、{cell: 图标项}、{cells: [图标项]}
@@ -1660,7 +1652,7 @@ function putCell(td, spec) {
 
 ${activitiesScript}
 
-function table(headers, rows) {
+function table(headers, rows, mobileLayout = headers.length >= 4 ? 'table-stack' : '') {
   const box = component('ui-table');
   const head = box.querySelector('thead tr');
   const headCell = head.firstElementChild;
@@ -1676,7 +1668,7 @@ function table(headers, rows) {
   const cellTemplate = rowTemplate.firstElementChild;
   rowTemplate.remove();
   const labels = headers.map(h => typeof h === 'string' ? h : h.label);
-  if (labels.length >= 4) box.classList.add('table-stack');
+  if (mobileLayout) box.classList.add(mobileLayout);
   for (const row of rows) {
     const tr = rowTemplate.cloneNode(false);
     row.forEach((spec, index) => {
@@ -1942,6 +1934,16 @@ ${productionPlanningScript}
 ${settingsScript}
 ${appointmentsScript}
 ${giftCodeScript}
+window.addEventListener('beforeunload', event => {
+  if (stalePageReloadRequested) {
+    stalePageReloadRequested = false;
+    return;
+  }
+  if (configIsDirty() || configEditor.saving || [...appointmentsEditors.values()].some(editor => editor.saving || appointmentsDirty(editor))) {
+    event.preventDefault();
+    event.returnValue = '';
+  }
+});
 let selectedResource = 'guild';
 consoleStore.subscribe((state, previous) => {
   if (state.view.resource !== previous.view.resource) selectedResource = state.view.resource;
