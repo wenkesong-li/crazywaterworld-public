@@ -194,10 +194,12 @@ function fmt(v) {
   return n.toLocaleString('zh-CN');
 }
 
-function when(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return d.toLocaleString('zh-CN', { hour12: false });
+function when(value) {
+  if (!value) return '';
+  const timestamp = typeof value === 'number' || /^[0-9]+$/.test(value) ? Number(value) : null;
+  if (timestamp !== null && (!Number.isFinite(timestamp) || timestamp <= 0)) return '';
+  const date = new Date(timestamp === null ? value : timestamp < 1e11 ? timestamp * 1000 : timestamp);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('zh-CN', { hour12: false });
 }
 
 let callsInFlight = 0, callProgressTimer = 0;
@@ -1857,7 +1859,7 @@ async function renderWorlds() {
     const top = el('div', 'top');
     top.appendChild(el('span', 'title', world.worldName ? world.worldName + '（' + world.worldId + '）' : String(world.worldId)));
     if (role.worldId && role.worldId !== world.worldId) top.appendChild(el('span', 'id', '合服后 -> ' + (role.worldName ? role.worldName + '（' + role.worldId + '）' : role.worldId)));
-    top.appendChild(el('span', 'id', (role.nickname || '') + ' lv' + (role.level ?? '') + ' 战力' + fmt(role.power) + ' 上次登录 ' + when(role.lastLoginTime)));
+    top.appendChild(el('span', 'id', (role.nickname || '') + ' lv' + (role.level ?? '') + ' 战力' + fmt(role.power) + ' 上次登录 ' + (when(role.lastLoginTime) || '未知')));
     const enter = smallButton('进入');
     enter.onclick = () => enterWorld(world.worldId);
     top.appendChild(enter);
