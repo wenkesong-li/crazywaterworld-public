@@ -1,4 +1,4 @@
-import {fleetRecordReason,fleetStateName,legacyFleetReservationReason,reserveDispatch} from './fleet-availability.mjs';
+import { isMiningSilicon, fleetRecordReason,fleetStateName,legacyFleetReservationReason,reserveDispatch} from './fleet-availability.mjs';
 import { recordsInWorld, settleFleetSnapshot } from './fleet-settlement.mjs';
 // 按原生委任策略接管后的城战攻守。只移动本人舰队和正常维修，不宣战。
 import { exactAutomationId } from './automation-policy.mjs';
@@ -19,6 +19,19 @@ export const cityWarEnabled = settings => settings?.cityWar?.enabled === true;
 const fleetRole = (preferences, id) => preferences?.defenceFleetIds?.includes(id) ? 'defence' : 'attack';
 const targetRole = target => target.role ?? 'attack';
 const roleName = role => role === 'defence' ? '防守' : '进攻';
+function nativeCommissionQuota(config, player) {
+  const level = player?.vip?.vipLevel;
+  if (!integer(level)) return null;
+  const levels = rows(config, 'VipLevelCfg');
+  const vip = levels.find(row => row.level === level);
+  // 当前 VIP 表从 1 级开始，无 VIP 的账号没有委任权益。
+  if (level === 0 && !vip && levels.some(row => row.level === 1)) return 0;
+  if (!Array.isArray(vip?.effects)) return null;
+  const effect = vip.effects.find(row => row[0] === '每日城战委任次数');
+  if (!effect) return 0;
+  return integer(effect[1]) ? effect[1] : null;
+}
+
 function targetPreferences(preferences, role, fleetId) {
   const strategy = cityWarFleetStrategy(preferences, fleetId);
   if (role !== 'defence') return strategy;
@@ -107,9 +120,7 @@ export async function readCityWar(client, protocol, config, player, preferences,
   const openDays = Array.isArray(days) && season > 0 ? days[Math.min(season, days.length) - 1] : null;
   if (!integer(openDays, 1) || !integer(player.worldOpenTime, 1) || player.worldOpenTime > now) { snapshot.reason = '无法确认城战赛季及开服条件'; return snapshot; }
   if (day(now) - day(player.worldOpenTime) + 1 < openDays) { snapshot.reason = '当前赛季尚未到城战开放日'; return snapshot; }
-  const vip = rows(config, 'VipLevelCfg').find(row => row.level === player.vip?.vipLevel);
-  const effect = vip?.effects?.find(row => row[0] === '每日城战委任次数');
-  if (vip) snapshot.nativeLimit = effect ? effect[1] : 0;
+  snapshot.nativeLimit = nativeCommissionQuota(config, player);
   const get = async (request, body = {}) => {
     const response = request.replace(/Request$/, 'Response');
     if (!protocol?.[request] || !protocol?.[response]) throw new Error('当前协议缺少' + request);
@@ -202,14 +213,14 @@ export async function readCityWar(client, protocol, config, player, preferences,
 // （不超过 VIP 额度），达到后关闭开关并由工具接续。
 function nativeState(fleet, snapshot, p) {
   const mode = p?.nativeCommissionLimit ?? -1;
+  if (snapshot.nativeLimit === 0) return { mode, target: 0, close: false, off: false };
   if (mode === 0) return { mode, target: 0, close: true, off: fleet?.autoFight?.isOn === true };
+  if (!integer(snapshot.nativeLimit)) return { mode, reason: '无法确认账号委任额度' };
   if (mode === -1) {
     if (!fleet?.autoFight || !integer(fleet.autoFight.todayTimes)) return { mode, reason: '无法确认今日原生委任次数' };
-    if (!integer(snapshot.nativeLimit, 1)) return { mode, reason: snapshot.nativeLimit === 0 ? '原生舰队委任尚未解锁' : '无法确认账号委任额度' };
     if (fleet.autoFight.todayTimes < snapshot.nativeLimit) return { mode, target: snapshot.nativeLimit, reason: '原生委任尚余 ' + (snapshot.nativeLimit - fleet.autoFight.todayTimes) + ' 次，暂不接续' };
     return { mode, target: snapshot.nativeLimit, close: false, off: false };
   }
-  if (!integer(snapshot.nativeLimit, 0)) return { mode, reason: '无法确认账号委任额度' };
   const target = Math.min(mode, snapshot.nativeLimit);
   if (target > 0 && (!fleet?.autoFight || !integer(fleet.autoFight.todayTimes))) return { mode, target, reason: '无法确认今日原生委任次数' };
   if (target > 0 && fleet.autoFight.todayTimes < target) return { mode, target, reason: '原生委任计划尚余 ' + (target - fleet.autoFight.todayTimes) + ' 次，暂不接续' };
@@ -238,6 +249,13 @@ export function cityWarReservedFleets(snapshot, settings, now = snapshot?.now) {
   return p.fleetIds.filter(id => (snapshot.targets ?? []).some(target => cityWarTargetSelected(p, target, id)));
 }
 
+export function reserveCityWarFleets(client, preferences, state, ids) {
+  const expires = Date.now() + Math.max(60000, (preferences.checkEverySeconds ?? 15) * 2000);
+  const closing = !state.reason && integer(state.endTime, 1)
+    ? state.endTime * 1000 - (client.serverClockOffsetMs || 0) : Infinity;
+  reserveDispatch(client, 'cityWar', ids, Math.min(expires, closing));
+}
+
 // 首杀发送前只刷新城战意向，不在候选复核期间另行派遣舰队。
 export async function refreshCityWarReservations(client, protocol, config, player, getSettings) {
   const settings = getSettings(), p = settings?.cityWar;
@@ -248,7 +266,7 @@ export async function refreshCityWarReservations(client, protocol, config, playe
   }
   // 查询可能横跨开战/结束时刻，不能沿用读取开始时的时间。
   const ids = snapshot.reason ? p.fleetIds : cityWarReservedFleets(snapshot, settings, nowOf(client));
-  reserveDispatch(client, 'cityWar', ids, Date.now() + Math.max(60000, (p.checkEverySeconds ?? 15) * 2000));
+  reserveCityWarFleets(client, p, snapshot, ids);
 }
 
 export function planCityWar(snapshot, settings, { keys = {}, pendingPetrol = 0 } = {}) {
@@ -256,6 +274,7 @@ export function planCityWar(snapshot, settings, { keys = {}, pendingPetrol = 0 }
   const p = settings?.cityWar;
   const plan = { actions: [], notes: [], reservedFleetIds: [], fleets: [], targets: snapshot.targets, nativeLimit: snapshot.nativeLimit,
     nativeCommissionLimit: p?.nativeCommissionLimit ?? -1, nativeOffFleetIds: [],
+    miningFleetIds: snapshot.fleets.filter(isMiningSilicon).map(f => f.buildingId),
     startTime: snapshot.startTime, endTime: snapshot.endTime, fuel: snapshot.fuel, inWindow: snapshot.inWindow, reason: snapshot.reason };
   const currentKeys = Object.entries(keys).filter(([key, value]) => key.startsWith('cityWar:' + snapshot.worldId + ':') && !value.expired);
   for (const [, record] of currentKeys) if (!record.confirmed && record.details?.buildingId) plan.reservedFleetIds.push(record.details.buildingId);
@@ -428,10 +447,7 @@ export async function runCityWar(client, protocol, config, player, { getSettings
       if (reviewed.nativeOffFleetIds.length) { plan.notes.push('原生委任状态变化，暂停本轮接续'); break; }
       const step = reviewed.actions.find(row => row.uniqueKey === proposed.uniqueKey && row.kind === proposed.kind && row.cityId === proposed.cityId && row.role === proposed.role && row.cost === proposed.cost);
       if (!step || !canUseFleet(step.buildingId) || legacyFleetReservationReason(client,step.buildingId) || settings !== getSettings() || !enabled() || exactAutomationId(player.guildId) !== fresh.guildId) continue;
-      const currentVip = rows(config, 'VipLevelCfg').find(row => row.level === player.vip?.vipLevel);
-      const currentLimit = currentVip?.effects?.find(row => row[0] === '每日城战委任次数')?.[1];
-      // 只有沿用 VIP 额度的模式需要核对额度；0/N 模式按设置接管，不因缺少 VIP 行被拦住。
-      const limitChanged = (settings.cityWar.nativeCommissionLimit ?? -1) < 0 && currentLimit !== fresh.nativeLimit;
+      const limitChanged = nativeCommissionQuota(config, player) !== fresh.nativeLimit;
       if (limitChanged || exactAutomationId(player.worldId) !== fresh.worldId ||
           nowOf(client) < fresh.startTime || nowOf(client) >= fresh.endTime) continue;
       const failure = rejected.get(client)?.get(step.uniqueKey);

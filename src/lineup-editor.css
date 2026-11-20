@@ -85,25 +85,52 @@ dialog.lineup-dialog[data-lineup-mode="editor"] { width:min(1000px,calc(100vw - 
 .lineup-editor button { cursor:pointer }
 .lineup-editor button:disabled { cursor:default; opacity:.45 }
 .lineup-editor button:focus-visible,.lineup-editor input:focus-visible,.lineup-editor select:focus-visible { outline:2px solid #ffe19b; outline-offset:3px }
-.lineup-editor input,.lineup-editor select { min-height:44px; color:#eef6ff; background:#11283e; border-color:#526e88 }
+.lineup-editor input,.lineup-editor select { min-height:44px; color:#eef6ff; background-color:#11283e; border-color:#526e88 }
 .lineup-editor input::placeholder { color:#a9bfd4 }
 .lineup-editor button:not(.lineup-slot):not(.lineup-hero) { min-height:44px; background:#263f58; color:#e9f2fb; border-color:#5e7992 }
 /* Keep the hero pool alongside the board so the editor fits a laptop screen. */
 #saved-lineup-editor .lineup-editor-heading { padding-block:10px }
+#saved-lineup-editor .lineup-editor-heading .bar { margin:0 }
 .lineup-editor .lineup-editor-workspace { grid-template-columns:minmax(0,1fr) minmax(320px,380px); padding:12px 16px; align-items:stretch }
-.lineup-editor-workspace .lineup-board { height:clamp(260px,calc(90dvh - 378px),350px); aspect-ratio:auto }
+.lineup-editor-workspace .lineup-board { height:clamp(272px,calc(90dvh - 388px),350px); aspect-ratio:auto }
 .lineup-editor-workspace .lineup-slot { width:calc(100% / 6) }
-.lineup-editor-workspace .lineup-slot::before { left:50%; transform:translateX(-50%) }
-.lineup-editor-workspace .lineup-selection { min-height:44px; padding:0; border:0 }
+.lineup-editor-workspace .lineup-slot::before { content:none }
+.lineup-editor-workspace .lineup-slot:has(.lineup-empty-slot) { justify-content:center }
+.lineup-editor-workspace .lineup-empty-slot+.lineup-slot-name { display:none }
+.lineup-editor-workspace .lineup-selection { min-height:44px; padding:8px 0 0; border:0; border-top:1px solid #334f6a }
 .lineup-editor-workspace .lineup-roster-section { display:flex; flex-direction:column; min-width:0; min-height:0; padding:0 }
+.lineup-editor-workspace .lineup-formation-options { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:6px 8px; align-content:start }
+.lineup-editor-workspace .lineup-formation-field { display:grid; gap:6px; font-size:14px; font-weight:600; line-height:1.5 }
+.lineup-editor-workspace .lineup-formation-select { width:100%; font-weight:400 }
+.lineup-editor-workspace .lineup-formation-options>:is(p,details) { grid-column:1 / -1; margin:0 }
+#saved-lineup-editor .lineup-recommend { align-self:end; padding-inline:12px; border:1px solid #e9c77d; border-radius:6px; background:#f1cc77; color:#172b3d; font-weight:600 }
+#saved-lineup-editor .lineup-recommend:enabled:hover { background:#ffe1a2 }
+.lineup-guide-dialog { width:min(600px,calc(100vw - 24px)); max-width:none; max-height:85dvh; margin:auto; padding:16px; border:1px solid #526e88; border-radius:12px; background:#12253b; color:var(--lineup-ink) }
+.lineup-guide-dialog[open] { display:grid; grid-template-rows:auto auto auto minmax(0,1fr); gap:10px; overflow:hidden }
+.lineup-guide-dialog::backdrop { background:#071423ad }
+.lineup-guide-heading,.lineup-guide-row { display:flex; align-items:center; justify-content:space-between; gap:12px }
+.lineup-guide-dialog input[type=search] { width:100% }
+.lineup-guide-list { overflow:auto; overscroll-behavior:contain; padding:0; margin:0; list-style:none; scrollbar-color:#526e88 #12253b }
+.lineup-guide-row { border-top:1px solid #38516b; padding:12px 4px; overflow-wrap:anywhere }
+.lineup-guide-row button { flex:none }
+.lineup-guide-type { display:inline-block; margin-inline-start:8px; color:#efce8a; font-size:12px }
+.lineup-guide-row p { margin-top:4px }
+.lineup-editor-workspace .lineup-roster-tools h4 { margin:0 0 6px }
+.lineup-editor-workspace .lineup-roster-pool { display:flex; flex-direction:column; min-height:0 }
 /* A length basis keeps the grid's intrinsic height independent of the hero count. */
 .lineup-editor-workspace .lineup-roster { flex:1 1 0px; height:0; min-height:120px; max-height:none; align-content:start }
-.lineup-editor-workspace .lineup-roster-filters { grid-template-columns:minmax(0,1.3fr) repeat(2,minmax(0,1fr)); margin-bottom:10px }
-.lineup-editor-workspace .lineup-pet-field { padding:10px 0 0; border-bottom:0; border-top:1px solid #334f6a; margin-top:10px }
+.lineup-editor-workspace .lineup-roster-filters { grid-template-columns:minmax(0,1.3fr) repeat(2,minmax(0,1fr)); margin:0 }
+.lineup-editor-workspace .lineup-roster-filters>* { width:100% }
+.lineup-editor-workspace .lineup-pet-field { padding:8px 0 0; border-bottom:0; border-top:1px solid #334f6a }
 .lineup-editor-workspace .lineup-pet-field>span { flex:none }
 #saved-lineup-editor .lineup-editor-footer { padding:12px 16px; gap:8px 10px; align-items:center }
 #saved-lineup-editor .lineup-name-field { flex-direction:row; align-items:center; gap:12px }
 #saved-lineup-editor .lineup-name-field>span { flex:none }
+@media (min-width:701px) {
+  dialog.lineup-dialog[data-lineup-mode="editor"],.lineup-dialog[data-lineup-mode="editor"] .lineup-dialog-body { max-height:94dvh }
+  .lineup-editor .lineup-editor-workspace { row-gap:10px }
+  .lineup-editor-workspace .lineup-roster-section,.lineup-editor-workspace .lineup-formation-panel { display:grid; grid-row:span 3; grid-template-rows:subgrid; row-gap:inherit }
+}
 @media (min-width:701px) and (max-width:900px) {
   .lineup-editor-workspace .lineup-roster-filters { grid-template-columns:repeat(2,minmax(0,1fr)) }
   .lineup-editor-workspace .lineup-roster-filters input { grid-column:1 / -1 }
@@ -127,9 +154,10 @@ dialog.lineup-dialog[data-lineup-mode="editor"] { width:min(1000px,calc(100vw - 
   .lineup-editor-workspace .lineup-formation-panel { order:-1 }
   .lineup-editor-workspace .lineup-board { height:310px }
   .lineup-editor-workspace .lineup-roster { flex:auto; height:auto; max-height:280px }
+  .lineup-editor-workspace .lineup-roster-section { gap:10px }
   .lineup-editor-workspace .lineup-pet-field { padding-bottom:12px }
   .lineup-editor .lineup-editor-heading { align-items:flex-start; padding:12px }
-  .lineup-editor .lineup-roster-section,.lineup-editor .lineup-selection,.lineup-editor .lineup-pet-field { padding-inline:12px }
+  .lineup-editor .lineup-roster-section,.lineup-editor .lineup-selection,.lineup-editor .lineup-pet-field { padding-inline:0 }
   .lineup-editor .lineup-pet-field { display:grid; grid-template-columns:auto 1fr }
   .lineup-editor .lineup-pet-field select { grid-column:1 / -1; width:100% }
   .lineup-editor .lineup-roster-filters { grid-template-columns:1fr 1fr }

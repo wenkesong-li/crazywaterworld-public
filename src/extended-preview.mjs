@@ -1,7 +1,7 @@
 import { readGuildOrderView } from './guild-orders.mjs';
 import { readGuildShips, guildShipDiagnostics } from './guild-ships.mjs';
 import { readGuildForts } from './guild-forts.mjs';
-import { readSiliconMining, planSiliconMining } from './silicon-mining.mjs';
+import { readSiliconMining, planSiliconMining, planSiliconMaintenance } from './silicon-mining.mjs';
 import { watchHeroRaidPushes } from './hero-raid-automation.mjs';
 
 // 全部为读取或纯计划；不调用 service / run，不使用预览草稿修改运行设置。
@@ -28,6 +28,8 @@ export async function previewExtended(category, client, protocol, config, player
   } else if (category === 'silicon') {
     const state = await readSiliconMining(client, protocol, config, player, { settings, ledger });
     const plan = planSiliconMining(state, settings, ledger, client);
+    const maintenance = await planSiliconMaintenance(client, protocol, config, settings, ledger, state);
+    if (maintenance && !plan.actions.some(action => action.buildingId === maintenance.buildingId)) plan.actions.push(maintenance);
     result.scopeLabel = '硅矿'; result.counts = { mines: state.mines.length, fleets: state.fleets.length };
     result.notes.push(state.reason || plan.reason || '已读取矿区与舰队状态', ...plan.notes, ...plan.rows.map(row => row.id + '：' + (row.reason || '符合派遣条件')));
     if (state.dailyRewards !== null) result.notes.push('今日保守计入奖励结算：' + state.dailyRewards + ' 次');

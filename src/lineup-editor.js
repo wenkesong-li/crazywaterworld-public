@@ -354,7 +354,7 @@ async function openSavedLineupEditor(account, preset) {
     dirty: false,
   });
   const modal = openLineupDialog(account, 'editor', preset?.id);
-  state.activeDraft = key; state.selectedHeroId = null;
+  state.activeDraft = key; state.selectedHeroId = null; state.editorMessage = '';
   renderLineupEditor(modal.body, state, account); modal.dialog.showModal();
   if (!state.editor) await loadLineupEditorData(account);
 }
@@ -625,7 +625,7 @@ function drawLineupRoster(state, account) {
     };
     bindLineupPointer(button, state, account, hero.heroId); roster.append(button);
   }
-  if (!heroes.length) roster.append(el('p', 'lineup-muted', state.editor ? '没有符合筛选条件的英雄' : '读取游戏数据后可选择英雄'));
+  if (state.editor && !state.loading && !heroes.length) roster.append(el('p', 'lineup-muted', '没有符合筛选条件的英雄'));
 }
 
 async function saveLineupDraft(account, state) {
@@ -661,6 +661,60 @@ async function saveLineupDraft(account, state) {
   }
 }
 
+function openLineupRecommendations(state, account, trigger) {
+  const choices = state.editor.recommendations;
+  const dialog = el('dialog', 'lineup-guide-dialog');
+  dialog.setAttribute('aria-labelledby', 'lineup-guide-title');
+  const heading = el('div', 'lineup-guide-heading'), title = el('h3', '', '选择推荐阵容');
+  title.id = 'lineup-guide-title';
+  const close = smallButton('返回布阵');
+  close.onclick = () => dialog.close();
+  heading.append(title, close);
+  const search = el('input'); search.type = 'search'; search.placeholder = '搜索搭配、英雄或阵型';
+  search.setAttribute('aria-label', search.placeholder);
+  const count = el('p', 'lineup-muted'); count.setAttribute('role', 'status');
+  const list = el('ul', 'lineup-guide-list');
+  const filter = () => {
+    const query = search.value.trim().toLowerCase();
+    const visible = choices.filter(choice => [choice.label, choice.presetName, ...choice.heroes].join(' ').toLowerCase().includes(query));
+    count.textContent = visible.length ? visible.filter(choice => choice.formation).length + ' 套可用 · 共 ' + visible.length + ' 套' : '没有匹配的搭配';
+    clear(list);
+    for (const choice of visible) {
+      const row = el('li', 'lineup-guide-row'), info = el('div');
+      info.append(el('strong', '', choice.label), el('span', 'lineup-guide-type', choice.presetName),
+        el('p', '', choice.heroes.join('、')));
+      if (choice.note || choice.reason) info.append(el('p', 'lineup-muted', [choice.note, choice.reason].filter(Boolean).join('。')));
+      const use = smallButton(choice.formation ? '使用这套' : '暂不可用');
+      use.disabled = !choice.formation;
+      use.onclick = () => {
+        if (!choice.formation || account !== current || !dialog.open || !dialog.isConnected || state.saving) return;
+        const draft = currentLineupDraft(state);
+        draft.formation.presetId = choice.formation.presetId;
+        draft.formation.heroPositions = structuredClone(choice.formation.heroPositions);
+        if (!draft.name.trim() || (!draft.id && draft.suggestedName === draft.name)) {
+          draft.name = draft.suggestedName = choice.label.slice(0, 60);
+        }
+        draft.dirty = true;
+        state.selectedHeroId = null;
+        state.editorMessage = '已填入「' + choice.label + '」，可调整后保存。';
+        dialog.close();
+        redrawLineupEditor(state, account);
+        state.ui.root.querySelector('.lineup-recommend')?.focus({ preventScroll: true });
+      };
+      row.append(info, use); list.append(row);
+    }
+    list.scrollTop = 0;
+  };
+  search.oninput = filter;
+  dialog.onkeydown = event => {
+    event.stopPropagation();
+    if (event.key === 'Escape') { event.preventDefault(); dialog.close(); }
+  };
+  dialog.onclose = () => { dialog.remove(); if (trigger.isConnected) trigger.focus({ preventScroll: true }); };
+  dialog.append(heading, search, count, list); filter();
+  state.ui.root.append(dialog); dialog.showModal();
+}
+
 function renderLineupEditor(host, state, account) {
   const draft = currentLineupDraft(state);
   if (!draft) return;
@@ -675,8 +729,8 @@ function renderLineupEditor(host, state, account) {
   const headingActions = el('div', 'bar'); headingActions.append(refresh, lineupDialogCloseButton('editor'));
   heading.append(title, headingActions); root.append(heading);
   if (state.editorError) root.append(el('p', 'lineup-editor-notice', state.editorError));
-  if (state.loading) root.append(el('p', 'lineup-muted', '正在读取游戏阵容和英雄，排队期间可继续编辑草稿名称。'));
   const workspace = el('div', 'lineup-workspace lineup-editor-workspace'), battlefield = el('div', 'lineup-battlefield');
+  workspace.setAttribute('aria-busy', String(state.loading));
   const formationPanel = el('section', 'lineup-formation-panel');
   const count = el('div', 'lineup-board-heading');
   count.append(el('span', '', '已上阵 ' + draft.formation.heroPositions.length + ' / ' + (state.editor?.capacity ?? '—')), el('span', '', '敌方 →'));
@@ -690,14 +744,26 @@ function renderLineupEditor(host, state, account) {
     typeSelect.add(option);
   }
   const selectedType = state.editor?.formations?.find(item => item.presetId === draft.formation.presetId);
-  if (!selectedType) typeSelect.add(new Option('阵型 ' + draft.formation.presetId + ' · 待读取', String(draft.formation.presetId)));
+  if (!selectedType) {
+    const cachedType = state.saved?.catalog?.formations?.find(type => type.presetId === draft.formation.presetId);
+    typeSelect.add(new Option(cachedType?.name || '阵型 ' + draft.formation.presetId, String(draft.formation.presetId)));
+  }
   typeSelect.value = String(draft.formation.presetId); typeSelect.disabled = state.saving || !state.editor;
   typeSelect.onchange = () => {
     if (account !== current || state.saving) return;
     changeLineupFormation(state, Number(typeSelect.value));
     redrawLineupEditor(state, account);
   };
-  typeField.append(el('span', '', '阵型'), typeSelect); options.append(typeField);
+  typeField.append(el('span', '', '阵型'), typeSelect);
+  const choose = el('button', 'lineup-recommend', '选择推荐阵容');
+  choose.type = 'button';
+  choose.setAttribute('aria-haspopup', 'dialog');
+  choose.disabled = state.saving || state.loading || !!state.editorError || !state.editor?.recommendations?.length;
+  choose.onclick = () => openLineupRecommendations(state, account, choose);
+  options.append(typeField, choose);
+  if (state.editor && !state.editor.recommendations?.length && !state.loading && !state.editorError) {
+    options.append(el('p', 'lineup-muted', '当前游戏配置没有推荐阵容。'));
+  }
   if (selectedType?.effect || selectedType?.unlockEffect) {
     const effect = el('details', 'lineup-effect lineup-effect-details');
     effect.append(el('summary', '', '阵型效果'));
@@ -730,7 +796,8 @@ function renderLineupEditor(host, state, account) {
   if (selectedPet) petField.append(iconEl(selectedPet.icon, 44, selectedPet.name));
   petField.append(petSelect);
   const rosterSection = el('section', 'lineup-roster-section'), filters = el('div', 'lineup-roster-filters');
-  rosterSection.append(el('h4', '', '选择英雄'));
+  const rosterTools = el('div', 'lineup-roster-tools');
+  rosterTools.append(el('h4', '', '选择英雄'));
   const search = el('input'); search.type = 'search'; search.placeholder = '搜索英雄'; search.value = state.query;
   search.setAttribute('aria-label', '搜索英雄'); search.disabled = state.saving;
   search.oninput = () => { state.query = search.value.trim(); drawLineupRoster(state, account); };
@@ -742,14 +809,15 @@ function renderLineupEditor(host, state, account) {
     select.onchange = () => { state[key] = select.value; drawLineupRoster(state, account); }; filters.append(select);
   }
   const roster = el('div', 'lineup-roster');
-  rosterSection.append(filters, roster);
-  rosterSection.append(el('p', 'lineup-muted for-touch', '滑动英雄名称可滚动列表，拖动头像可布阵。'));
-  rosterSection.append(petField);
+  rosterTools.append(filters);
+  const rosterPool = el('div', 'lineup-roster-pool');
+  rosterPool.append(roster, el('p', 'lineup-muted for-touch', '滑动英雄名称可滚动列表，拖动头像可布阵。'));
+  rosterSection.append(rosterTools, rosterPool, petField);
   workspace.append(rosterSection, formationPanel); root.append(workspace);
   const footer = el('div', 'lineup-editor-footer'), nameField = el('label', 'lineup-name-field'), name = el('input');
   name.type = 'text'; name.value = draft.name; name.autocomplete = 'off'; name.maxLength = 60;
   name.disabled = state.saving; name.setAttribute('aria-label', '阵容名称');
-  name.oninput = () => { draft.name = name.value; draft.dirty = true; };
+  name.oninput = () => { draft.name = name.value; delete draft.suggestedName; draft.dirty = true; };
   nameField.append(el('span', '', '阵容名称'), name);
   const save = smallButton(state.saving ? '正在保存…' : '保存阵容'); save.disabled = state.saving || !state.saved;
   save.onclick = () => saveLineupDraft(account, state);

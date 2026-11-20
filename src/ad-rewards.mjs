@@ -1,6 +1,7 @@
 // 挂机收益与工厂/建筑/博物馆加速的广告入口，广告次数读 OnWaterResponse.adv。
 import { normalize } from './worlds.mjs';
 import { displayMaterial } from './config.mjs';
+import { makeTypeResolver } from './world.mjs';
 import { adAccess, takeAdSlot, prepareAd, coolAd, isAdNotFinished, AD_PACED_REASON, AD_NOT_FINISHED_REASON, AD_PAUSED_REASON } from './ad-shop.mjs';
 
 const EFFECT_AFK = 1, EFFECT_PRODUCTION = 6, EFFECT_BUILDING = 8;
@@ -127,12 +128,13 @@ export async function claimAfkAd(client, config, ctx) {
   });
 }
 
-function productionTarget(water, settings, now) {
+function productionTarget(water, now, factoryEnabled) {
   const jobs = [];
   for (const building of water.building ?? []) {
-    if (!building.factory || blockedBy(settings?.factory?.disabledTypes, building)) continue;
+    if (!building.factory || !building.buildingId || !factoryEnabled(building)) continue;
     for (const job of building.factory.factoryQ ?? []) {
-      if (job.finishTime - now > MIN_REMAINING) jobs.push({ buildingId: building.buildingId, idx: job.idx ?? 0, productId: job.productId, finishTime: job.finishTime });
+      if (job.productId && job.finishTime - now > MIN_REMAINING) jobs.push({ buildingId: building.buildingId, type: building.type,
+        idx: job.idx ?? 0, productId: job.productId, finishTime: job.finishTime });
     }
   }
   return jobs.sort((a, b) => b.finishTime - a.finishTime)[0] ?? null;
@@ -176,12 +178,15 @@ async function finishMuseumCases(client, ctx, cases, now) {
   }
 }
 
-function productionSpec(client, target) {
+function productionSpec(client, target, factoryEnabled) {
   return {
     key: 'adSpeedUpProduce', effectId: EFFECT_PRODUCTION, request: 'SpeedUpFactoryProduceRequest',
     label: '工厂生产广告加速', finishTime: target.finishTime,
-    stillValid: () => target.finishTime > clock(client),
-    recheck: water => findJob(water, target)?.finishTime > clock(client),
+    stillValid: () => target.finishTime > clock(client) && factoryEnabled(target),
+    recheck: water => {
+      const job = findJob(water, target);
+      return job?.productId === target.productId && job.finishTime === target.finishTime && job.finishTime > clock(client);
+    },
     send: () => client.request('SpeedUpFactoryProduceRequest', { buildingId: target.buildingId, index: target.idx, speedUp: AD_SPEED_UP }, 'OkResponse'),
     confirmed: (_, after) => {
       const job = findJob(after, target);
@@ -245,9 +250,12 @@ export async function claimAdSpeedUps(client, config, ctx) {
     deferUnavailable(ctx, active);
     return;
   }
+  const resolveType = makeTypeResolver(config);
+  const factoryEnabled = building => !blockedBy(ctx.getSettings?.()?.factory?.disabledTypes,
+    { buildingId: building.buildingId, type: building.type ?? resolveType(building.buildingId) });
   await runSpeedUps(client, config, ctx, access, EFFECT_PRODUCTION, ['adSpeedUpProduce'], water => {
-    const target = productionTarget(water, settings, clock(client));
-    return target && productionSpec(client, target);
+    const target = productionTarget(water, clock(client), factoryEnabled);
+    return target && productionSpec(client, target, factoryEnabled);
   });
   if (ctx.enabled('adSpeedUpMuseum')) {
     const water = await readWater(client);

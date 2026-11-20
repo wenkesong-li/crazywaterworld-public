@@ -4,6 +4,7 @@ import { fleetRecordReason, legacyFleetReservationReason } from './fleet-availab
 import { normalize } from './worlds.mjs';
 import { exactAutomationId, automationWireId, resourceReserve } from './automation-policy.mjs';
 import { runRadarIdleRepair, radarRepairPending } from './radar.mjs';
+import { previouslySwept, readRadarSweep, runRadarSweep, settleRadarSweeps } from './radar-sweep.mjs';
 const nowOf=c=>Math.floor((Date.now()+(c.serverClockOffsetMs||0))/1000);
 const valid=(n,min=0)=>Number.isSafeInteger(n)&&n>=min;
 const busy=new WeakSet();
@@ -27,22 +28,30 @@ export async function readAllianceRadar(client,config,player){
 const eventKey=(_snapshot,event)=>radarKey(event);
 export async function runAllianceRadar(client,config,player,{getSettings,ledger,protocol,enabled:callerEnabled,report,canUseFleet=()=>true}){
  const moduleEnabled=()=>callerEnabled()&&getSettings()?.radar?.runEnabled!==false;
- const enabled=()=>callerEnabled()&&getSettings()?.radar?.runEnabled!==false&&getSettings()?.radar?.enabled===true;
+ const enabled=()=>moduleEnabled()&&getSettings()?.radar?.enabled===true;
  if(!moduleEnabled()||!(getSettings()?.radar.enabled||getSettings()?.radar.repairIdle)||busy.has(client))return;busy.add(client);
  const note=reason=>report({label:'联盟情报',skipped:true,reason});
  try{
   await runRadarIdleRepair(client,protocol,config,{player,getSettings,ledger,enabled:moduleEnabled,report,canUseFleet});
   if(!enabled())return;
-  if(radarRepairPending(client)){note('舰队维修支出待确认，暂不派遣情报');return;}
   if(!ledger)throw Error('情报额度记录不可用');
   const baseline=ledger.keyRecords();
+  const sweep=await readRadarSweep(client,protocol??client.protocol,player);
+  if(!enabled())return;
+  if(sweep){
+    await runRadarSweep(client,sweep,player,{baseline,ledger,enabled,report});
+    return;
+  }
+  if(radarRepairPending(client)){note('舰队维修支出待确认，暂不派遣情报');return;}
   const readStartedAt=Date.now();
   let s=await readAllianceRadar(client,config,player);
+  settleRadarSweeps(s,baseline,ledger);
+  const batchClaims=previouslySwept(s,baseline);
   const changes=settleFleetSnapshot(ledger,{worldId:s.world,fleets:s.fleets,events:s.events,readStartedAt,baseline,kinds:['radarSend']});
   for(const change of changes)report({label:change.reason==='确认情报派遣'?'已确认前次联盟情报派遣':'已释放返航舰队的情报占用',ok:true,reason:change.reason});
   for(const e of s.events.filter(e=>e.state===4)){
    if(!enabled()||!getSettings().radar.enabled)return;
-   const key='radar-claim:'+s.world+':'+eventKey(s,e);if(ledger.hasKey(key))continue;
+   const key='radar-claim:'+s.world+':'+eventKey(s,e);if(ledger.hasKey(key)||batchClaims.has(radarKey(e)))continue;
    const ticket=ledger.reserve({},{},{},{uniqueKey:key,details:{kind:'radarClaim'}});
    try{const reply=await client.request('RadarGetRewardRequest',e.fixed?{}:{uid:automationWireId(e.uid)},'GotRewardResponse');
     if(!normalize(reply?.reward)?.asset?.length)throw Error('情报奖励回执未确认');ledger.confirm(ticket);report({label:'已领取完成的联盟情报奖励',ok:true});

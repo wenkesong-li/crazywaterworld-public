@@ -99,6 +99,7 @@ ${chrome()}
   </section>
 
   <section id="tab-guild" class="hidden">${guildPage()}</section>
+  <section id="tab-dailies" class="hidden" aria-label="日常任务"><div id="daily-tasks-root"></div></section>
 
   <section id="tab-giftcodes" class="hidden">
     ${giftCodesPage()}
@@ -793,8 +794,10 @@ function renderHostingControl() {
   $('loop-toggle').textContent = snapshot.loopStopping ? '暂停中…' : running ? '暂停挂机' : '开始挂机';
   $('loop-toggle').title = snapshot.paused ? '请先恢复托管' : running ? '停止自动循环，保留游戏连接和手动操作' : '按已保存的任务持续挂机，直到手动暂停';
   $('account-pause').disabled = pending || ((resume || !hosting) && (!!snapshot.loopStopping || loopAccount !== current));
-  $('account-pause').textContent = resume ? '恢复托管' : hosting ? '暂停托管' : '开始托管';
+  const switchRole = snapshot.paused && accounts.find(account => account.id === current)?.hasSiblingRoles;
+  $('account-pause').textContent = switchRole ? '切换并托管' : resume ? '恢复托管' : hosting ? '暂停托管' : '开始托管';
   $('account-pause').title = resume ? '重新登录游戏并按已保存的任务开始持续托管' : hosting ? '停止任务并断开游戏连接，方便自行上号' : '按已保存的任务开始持续托管';
+  if (switchRole) $('account-pause').title = '先暂停同一账号的其他角色，再按本角色的配置开始托管';
 }
 function renderAccountSelect() {
   appointmentsAccountChanged();
@@ -810,6 +813,7 @@ function renderAccountSelect() {
   resourceFieldsAccountChanged();
   if (productionPlanOwner !== null && (productionPlanOwner !== current || !snapshot.connected || snapshot.paused || disconnected.has(current))) resetProductionPlan();
   $('production-plan-refresh').disabled = productionPlanBusy || !snapshot.connected || snapshot.paused || disconnected.has(current);
+  if (productionPlanOwner === null) $('production-plan-status').textContent = $('production-plan-refresh').disabled ? '连接账号后可生成计划' : '';
   renderHostingControl();
   paintConnection();
   $('connect').disabled = snapshot.paused || snapshot.reconnecting || snapshot.connected || connectingAccounts.has(current) || !accounts.length;
@@ -1350,12 +1354,33 @@ function orderState(order, data) {
   const box = el('div', 'order-state');
   const decision = order.decision;
   const labels = { ready: data.idleRunning ? '等待自动交付' : '等待开启挂机', disabled: '自动交付已关闭', refreshing: '订单刷新中',
-    unknown: '等待核对', missing: '材料不足', reserved: '材料已预留', reroll: '等待换单', productionSkipped: '已跳过排产' };
+    unknown: '等待核对', filtered: '已过滤', missing: '材料不足', reserved: '材料已预留', reroll: '等待换单', productionSkipped: '已跳过排产' };
   const state = decision?.status ?? 'unknown';
   const label = !data.autoDeliverOrders && !['reroll','refreshing'].includes(state) ? labels.disabled : labels[state] || labels.unknown;
-  box.appendChild(chip(state === 'ready' && data.idleRunning && data.autoDeliverOrders ? 'ready' : 'waiting', label));
+  const shortages = decision?.shortages || [];
+  const tags = el('div', 'order-state-tags');
+  const materialLabel = state === 'reserved' ? labels.reserved : labels.missing;
+  if (shortages.length && materialLabel !== label) tags.appendChild(chip('waiting', materialLabel));
+  const status = chip(state === 'ready' && data.idleRunning && data.autoDeliverOrders ? 'ready' : 'waiting', label);
+  if (decision?.reason) status.title = decision.reason;
+  tags.appendChild(status);
+  box.appendChild(tags);
   if(order.refreshTime>0){const time=el('span','order-refresh-time',orderRefreshLabel(order.refreshTime));time.dataset.orderRefreshAt=String(order.refreshTime);box.append(time);}
-  if (decision?.reason) box.appendChild(el('span', 'dim', decision.reason));
+  if (shortages.length) {
+    const list = el('ul', 'order-material-list');
+    for (const item of shortages) {
+      const row = el('li');
+      const held = Number.isFinite(item.owned) && Number.isFinite(item.available)
+        ? Math.max(0, item.owned - item.available) : null;
+      row.append(el('span', 'order-material-name', item.name || item.id),
+        el('span', null, '需：' + fmt(item.required)), el('span', 'order-material-missing', '缺：' + fmt(item.missing)),
+        el('span', null, '留：' + fmt(held)));
+      list.appendChild(row);
+    }
+    box.appendChild(list);
+  } else if (decision?.reason && state !== 'refreshing') {
+    box.appendChild(el('span', 'dim', decision.reason));
+  }
   return box;
 }
 
@@ -1429,65 +1454,107 @@ function updateWorldProductionTimers() {
     node.textContent = worldProductionTime(Number(node.dataset.productionFinishAt),
       node.dataset.productionReadyText, node.dataset.productionActiveText);
   }
+  const now = (Date.now() + orderClockOffset) / 1000;
+  for (const badge of document.querySelectorAll('[data-factory-active-until]')) {
+    if (Number(badge.dataset.factoryActiveUntil) <= now) {
+      badge.textContent = '待收取';
+      delete badge.dataset.factoryActiveUntil;
+    }
+  }
 }
 
-function factoryProductionQueue(factory) {
-  if (!Array.isArray(factory.jobs) || factory.queueKnown === false) {
-    return el('span', 'dim', '生产队列未同步');
-  }
+const factoryFinishClock = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+});
+
+function factoryProduct(job, recipes, num = 1) {
+  if (!job.productId) return el('span', 'dim', job.name || '产物未同步');
+  return planMaterialList([{ id: job.productId, name: job.name, icon: job.icon, num }], recipes);
+}
+
+function factoryProductionQueue(factory, recipes) {
+  const section = el('section', 'factory-game-section');
+  section.appendChild(el('h3', null, '游戏生产格'));
+  const known = Array.isArray(factory.jobs) && factory.queueKnown !== false;
+  const jobs = known ? factory.jobs : [];
   const queue = el('div', 'factory-queue');
-  queue.setAttribute('aria-label', factory.buildingId + '生产格');
-  const capacity = Number.isInteger(factory.capacity) && factory.capacity > 0 ? factory.capacity : 0;
-  const count = Math.max(factory.jobs.length, capacity);
-  for (let index = 0; index < count; index++) {
-    const job = factory.jobs[index];
+  queue.setAttribute('aria-label', (factory.displayName || factory.buildingId) + '游戏生产格');
+  const capacity = Number.isInteger(factory.capacity) && factory.capacity > 0 ? factory.capacity : 6;
+  let waiting = 0;
+  for (let index = 0; index < capacity; index++) {
+    const job = jobs[index];
     const slot = el('div', 'factory-slot');
-    slot.appendChild(el('span', 'dim', '格子 ' + (index + 1)));
+    const header = el('div', 'factory-slot-header');
+    header.appendChild(el('span', 'dim', '格子 ' + (index + 1)));
+    slot.appendChild(header);
     if (job) {
-      slot.appendChild(el('span', 'factory-product', job.name || job.productId || '产物未同步'));
-      slot.appendChild(job.finishTime > 0
-        ? worldProductionTimer(job.finishTime, '已完成 · 待收取')
-        : el('span', 'dim', '等待生产'));
+      const timed = job.finishTime > 0;
+      let badge;
+      if (timed) {
+        const running = job.finishTime > (Date.now() + orderClockOffset) / 1000;
+        badge = chip('ready', running ? '生产中' : '待收取');
+        if (running) badge.dataset.factoryActiveUntil = String(job.finishTime);
+      } else {
+        badge = chip('waiting', '排队 #' + (++waiting));
+      }
+      header.appendChild(badge);
+      const product = el('div', 'factory-product');
+      product.appendChild(factoryProduct(job, recipes));
+      slot.appendChild(product);
+      if (timed) {
+        const time = el('div', 'factory-finish');
+        time.append(el('span', 'dim', '完成时间'), el('span', null, factoryFinishClock.format(job.finishTime * 1000)));
+        slot.appendChild(time);
+      }
     } else {
-      slot.appendChild(el('span', 'dim', '空闲'));
+      slot.classList.add('factory-empty');
+      slot.appendChild(el('span', 'factory-product dim', known ? '空闲' : '未同步'));
     }
     queue.appendChild(slot);
   }
-  if (!capacity) queue.appendChild(el('span', 'dim', '生产格数量未同步'));
-  return queue;
+  section.appendChild(queue);
+  if (jobs.length > capacity) {
+    const overflow = jobs.slice(capacity).map(job => job.name || job.productId || '产物未同步');
+    section.appendChild(el('p', 'dim', '游戏队列另外返回 ' + overflow.length + ' 项：' + overflow.join('、')));
+  }
+  return section;
 }
 
-function updateFactoryProductionDialog(factory) {
-  $('factory-production-dialog').dataset.factoryId = factory.buildingId;
-  $('factory-production-title').textContent = factory.buildingId + ' · 排产详情';
-  clear($('factory-production-body')).appendChild(factoryProductionQueue(factory));
+function factoryPlannedProduction(factory, recipes) {
+  const section = el('section', 'factory-planned-section');
+  const heading = el('h3', null, '排产计划');
+  section.appendChild(heading);
+  const jobs = factory.plannedJobs;
+  if (!jobs?.length) {
+    section.appendChild(el('p', 'dim', Array.isArray(jobs) ? '本轮没有待投产任务' : '本轮计划未同步'));
+    return section;
+  }
+  const list = el('ol', 'factory-planned-list');
+  const groups = [];
+  for (const job of jobs) {
+    const last = groups.at(-1);
+    if (last && (job.productId || job.name) === (last[0].productId || last[0].name)) last.push(job);
+    else groups.push([job]);
+  }
+  heading.appendChild(el('span', 'factory-planned-caption dim', '整批预计完成（北京时间）'));
+  for (const group of groups) {
+    const row = el('li', 'factory-planned-group');
+    const first = group[0];
+    row.appendChild(factoryProduct(first, recipes, group.length));
+    if (group.every(job => Number.isFinite(job.estimatedFinishTime) && job.estimatedFinishTime > 0)) {
+      const time = Math.max(...group.map(job => job.estimatedFinishTime));
+      const stamp = el('time', 'factory-planned-time', factoryFinishClock.format(time * 1000));
+      stamp.dateTime = new Date(time * 1000).toISOString();
+      row.appendChild(stamp);
+    } else row.appendChild(el('span', 'dim', '时间待定'));
+    list.appendChild(row);
+  }
+  section.appendChild(list);
+  return section;
 }
 
-function showFactoryProduction(factory) {
-  updateFactoryProductionDialog(factory);
-  const dialog = $('factory-production-dialog');
-  if (!dialog.open) dialog.showModal();
-  $('factory-production-close').focus();
-}
-
-function closeFactoryProduction() {
-  const dialog = $('factory-production-dialog');
-  if (dialog.open) dialog.close();
-}
-
-$('factory-production-close').onclick = closeFactoryProduction;
-$('factory-production-dialog').onclose = () => {
-  const dialog = $('factory-production-dialog');
-  if (dialog.open) return;
-  const factoryId = dialog.dataset.factoryId;
-  delete dialog.dataset.factoryId;
-  clear($('factory-production-body'));
-  const trigger = [...document.querySelectorAll('[data-factory-production]')]
-    .find(button => button.dataset.factoryProduction === factoryId);
-  (trigger || $('tab-manual')).focus();
-};
-
-function factoryCurrentProduction(factory) {
+function factoryCurrentProduction(factory, recipes) {
   if (!Array.isArray(factory.jobs) || factory.queueKnown === false) {
     return el('span', 'dim', '生产队列未同步');
   }
@@ -1496,60 +1563,126 @@ function factoryCurrentProduction(factory) {
   const active = factory.jobs.filter(job => job.finishTime > now);
   for (const job of active) {
     const product = el('div', 'factory-current-product');
-    product.append(el('span', null, job.name || job.productId || '产物未同步'),
+    product.append(factoryProduct(job, recipes),
       worldProductionTimer(job.finishTime, '已完成 · 待收取'));
     current.appendChild(product);
   }
   if (!active.length) {
     const completed = factory.jobs.find(job => job.finishTime > 0 && job.finishTime <= now);
-    const status = completed ? (completed.name || completed.productId || '产物未同步') + ' · 已完成 · 待收取'
-      : factory.jobs.length ? '等待开工' : '空闲';
+    if (completed) current.appendChild(factoryProduct(completed, recipes));
+    const status = completed ? '已完成 · 待收取' : factory.jobs.length ? '等待开工' : '空闲';
     current.appendChild(el('span', 'dim', status));
   }
-  if (!factory.jobs.length) return current;
-  const button = smallButton('查看排产（' + factory.jobs.length + '）');
-  button.type = 'button';
-  button.dataset.factoryProduction = factory.buildingId;
-  button.setAttribute('aria-haspopup', 'dialog');
-  button.setAttribute('aria-controls', 'factory-production-dialog');
-  button.setAttribute('aria-label', factory.buildingId + '查看排产');
-  button.onclick = () => showFactoryProduction(factory);
-  current.appendChild(button);
   return current;
 }
 
-function buildingSection(title, className, content) {
-  const section = el('section', className);
-  section.append(el('h2', null, title), content);
+function factoryProductionSection(factories, expanded, recipes) {
+  const headers = ['建筑', '类型', '等级', '当前产物', '自动生产', '游戏排队'];
+  const result = table(headers, factories.map(b => {
+    const button = component('ui-factory-toggle');
+    button.dataset.factoryProduction = b.buildingId;
+    const name = b.displayName || b.buildingId;
+    if (b.icon) button.appendChild(iconEl(b.icon, 26, name));
+    button.appendChild(el('span', null, name));
+    const queued = b.queueKnown !== false && Array.isArray(b.jobs) ? b.jobs.filter(job => !(job.finishTime > 0)) : null;
+    const first = queued?.[0];
+    const preview = el('div', 'factory-queue-preview', first ? '' : queued ? '—' : '未同步');
+    if (first) preview.appendChild(factoryProduct(first, recipes));
+    if (queued?.length > 1) preview.appendChild(el('small', 'dim', '共 ' + queued.length + ' 件'));
+    return [button, b.typeName || b.type, 'lv' + b.level, factoryCurrentProduction(b, recipes),
+      chip(b.autoEnabled ? 'ready' : 'unknown', b.autoEnabled == null ? '未同步' : b.autoEnabled ? '已开启' : '未开启'), preview];
+  }), 'sea-records');
+  const toggleAll = component('ui-button');
+  toggleAll.type = 'button';
+  const entries = Array.from(result.querySelectorAll('tbody tr'), (row, index) => {
+    const factory = factories[index];
+    const button = row.querySelector('[data-factory-production]');
+    const detail = el('tr', 'factory-detail');
+    detail.id = 'factory-slots-' + index;
+    const cell = el('td');
+    cell.colSpan = headers.length;
+    detail.appendChild(cell);
+    row.after(detail);
+    button.setAttribute('aria-controls', detail.id);
+    const setExpanded = open => {
+      button.setAttribute('aria-expanded', String(open));
+      button.setAttribute('aria-label', (open ? '收起' : '展开') + (factory.displayName || factory.buildingId) + '的生产格');
+      detail.hidden = !open;
+      clear(cell);
+      if (open) {
+        const sections = el('div', 'factory-detail-sections');
+        sections.append(factoryProductionQueue(factory, recipes), factoryPlannedProduction(factory, recipes));
+        cell.appendChild(sections);
+      }
+    };
+    setExpanded(expanded.has(factory.buildingId));
+    button.onclick = () => {
+      setExpanded(detail.hidden);
+      updateToggleAll();
+    };
+    return { detail, setExpanded };
+  });
+  function updateToggleAll() {
+    const allOpen = entries.every(({ detail }) => !detail.hidden);
+    toggleAll.textContent = allOpen ? '全部收起' : '全部展开';
+    toggleAll.setAttribute('aria-label', toggleAll.textContent + '工厂明细');
+    toggleAll.setAttribute('aria-expanded', String(allOpen));
+  }
+  toggleAll.setAttribute('aria-controls', entries.map(({ detail }) => detail.id).join(' '));
+  toggleAll.onclick = () => {
+    const open = entries.some(({ detail }) => detail.hidden);
+    for (const { detail, setExpanded } of entries) {
+      if (detail.hidden === open) setExpanded(open);
+    }
+    updateToggleAll();
+  };
+  updateToggleAll();
+  return buildingSection('工厂', 'world-factory-section', result, toggleAll);
+}
+
+function buildingSection(title, className, content, button) {
+  const section = component('ui-building-card');
+  section.classList.add(className);
+  section.setAttribute('role', 'region');
+  section.setAttribute('aria-label', title);
+  section.querySelector('h2').textContent = title;
+  button.dataset.buildingToggle = className;
+  section.querySelector('[data-slot="card-header"]').appendChild(button);
+  section.querySelector('[data-slot="card-content"]').appendChild(content);
   return section;
+}
+
+function buildingListSection(title, className, content, collapsed) {
+  const button = component('ui-button');
+  button.type = 'button';
+  content.id = className + '-list';
+  content.dataset.buildingList = className;
+  button.setAttribute('aria-controls', content.id);
+  const setOpen = open => {
+    content.hidden = !open;
+    button.textContent = open ? '收起' : '展开';
+    button.setAttribute('aria-label', button.textContent + title + '列表');
+    button.setAttribute('aria-expanded', String(open));
+  };
+  setOpen(!collapsed.has(className));
+  button.onclick = () => setOpen(content.hidden);
+  return buildingSection(title, className, content, button);
 }
 
 function renderWorld(data) {
   stateActions.setGameData(current, 'world', data);
   orderClockOffset=Number.isFinite(data.serverNow)?data.serverNow*1000-Date.now():0;
   $('world-view').textContent = '';
-  const fbox = clear($('world-factories'));
+  const recipes = new Map((data.recipes || []).map(recipe => [recipe.productId, recipe]));
+  const fbox = $('world-factories');
+  const expanded = new Set([...fbox.querySelectorAll('[aria-expanded="true"]')].map(node => node.dataset.factoryProduction).filter(Boolean));
+  const collapsed = new Set([...fbox.querySelectorAll('[data-building-list]')].filter(node => node.hidden).map(node => node.dataset.buildingList));
+  const focusedFactory = document.activeElement?.dataset.factoryProduction;
+  const focusedGroup = document.activeElement?.dataset.buildingToggle;
+  clear(fbox);
   if (data.factories?.length) {
     const factories = [...data.factories].sort((a, b) => a.buildingId.localeCompare(b.buildingId, 'zh-CN', { numeric: true }));
-    const factoryTable = table(['建筑', '类型', '等级', '当前产物', '自动生产', '下一产物'], factories.map((b) => {
-      const queueKnown = b.queueKnown !== false && Array.isArray(b.jobs);
-      const next = queueKnown ? b.jobs.find(job => !(job.finishTime > 0)) : null;
-      return [
-        { cell: b.icon, text: b.buildingId },
-        b.typeName || b.type,
-        'lv' + b.level,
-        factoryCurrentProduction(b),
-        b.autoEnabled == null ? '未同步' : b.autoEnabled ? '已开启' : '未开启',
-        !queueKnown ? '未同步' : next ? next.name || next.productId || '产物未同步' : '—',
-      ];
-    }), 'sea-records');
-    fbox.appendChild(buildingSection('工厂', 'world-factory-section', factoryTable));
-  }
-  const productionDialog = $('factory-production-dialog');
-  if (productionDialog.open) {
-    const factory = data.factories?.find(row => row.buildingId === productionDialog.dataset.factoryId);
-    if (factory) updateFactoryProductionDialog(factory);
-    else closeFactoryProduction();
+    fbox.appendChild(factoryProductionSection(factories, expanded, recipes));
   }
   if (data.farms?.length) {
     const plots = [...data.farms].sort((a, b) => a.plot.localeCompare(b.plot, 'zh-CN', { numeric: true }));
@@ -1562,30 +1695,36 @@ function renderWorld(data) {
       } else if (plot.productId) {
         status = '成熟时间未同步';
       }
-      return [plot.plot, plot.level == null ? '未同步' : 'lv' + plot.level,
-        plot.productName || plot.productId || '—', status];
-    }), '');
-    fbox.appendChild(buildingSection('农田', 'world-farm-section', farmTable));
+      const recipe = recipes.get(plot.productId);
+      const crop = recipe ? planMaterialList([{ id: plot.productId, name: plot.productName, num: recipe.output }], recipes)
+        : plot.productName || plot.productId || '—';
+      return [plot.displayName || plot.plot, plot.level == null ? '未同步' : 'lv' + plot.level, crop, status];
+    }), 'sea-records');
+    fbox.appendChild(buildingListSection('农田', 'world-farm-section', farmTable, collapsed));
   }
   // 空位：没盖的（待建）与正在盖的（施工中）。计划器只会建「待建」那些，
   // 施工中的只能等它盖完由竣工步骤收尾，所以两种状态要分开说，不然看不出差在哪。
   const slots = (data.buildings || []).filter((b) => b.level === 0);
   if (slots.length) {
     const slotTable = table(['空位', '类型', '状态'], slots.map((b) => [
-      { cell: b.icon, text: b.buildingId },
+      { cell: b.icon, text: b.displayName || b.buildingId },
       b.typeName || b.type || '未知类型',
       b.building ? chip('waiting', '施工中') : b.awaitingFinish ? chip('ready', '待竣工') : chip('ready', '待建'),
-    ]));
-    fbox.appendChild(buildingSection('空位', 'world-slot-section', slotTable));
+    ]), 'sea-records');
+    fbox.appendChild(buildingListSection('空位', 'world-slot-section', slotTable, collapsed));
+  }
+  if (focusedFactory || focusedGroup) {
+    const button = focusedFactory
+      ? [...fbox.querySelectorAll('[data-factory-production]')].find(node => node.dataset.factoryProduction === focusedFactory)
+      : fbox.querySelector('[data-building-toggle="' + focusedGroup + '"]');
+    (button || $('tab-manual')).focus({ preventScroll: true });
   }
   const obox = clear($('world-orders'));
   if (data.orders.length) {
-    obox.appendChild(el('h2', null, '居民订单'));
-    obox.appendChild(el('p', 'dim', '可手动提交材料已齐的订单。账号忙时自动排队，交付结果见运行日志。'));
     const ordersTable = table(['订单', '居民', '需求', '挂机交付', '手动操作'], data.orders.map((o) => [
       '#' + o.index,
       { cell: o.workerIcon, text: (o.workerName || '未知居民') + (o.isSpecial ? '（特殊）' : '') },
-      o.requirements.length && o.decision?.status !== 'refreshing' ? { cells: o.requirements } : '—',
+      o.requirements.length && o.decision?.status !== 'refreshing' ? planMaterialList(o.requirements, recipes, 'resident-order-products-' + o.index) : '—',
       orderState(o, data),
       residentOrderActions(o),
     ]), 'sea-records');
@@ -1601,7 +1740,6 @@ function refreshManualWorld(force = false) {
   const account = current;
   const available = account && !snapshot.paused && !disconnected.has(account);
   if (displayedWorldAccount !== account || !available) {
-    closeFactoryProduction();
     $('inventory-status').textContent='正在读取库存';
     displayedWorldAccount = account;
     resetInventory();
@@ -1700,6 +1838,20 @@ function table(headers, rows, mobileLayout = headers.length >= 4 ? 'table-stack'
 
 // ---- 账号页 ----------------------------------------------------------------
 ${accountBackupScript}
+document.addEventListener('click', event => {
+  for (const menu of document.querySelectorAll('.account-card-menu[open]')) {
+    if (!menu.contains(event.target)) menu.open = false;
+  }
+}, true);
+$('accounts').addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return;
+  const menu = event.target.closest('.account-card-menu[open]');
+  if (!menu) return;
+  event.preventDefault();
+  menu.open = false;
+  menu.querySelector('summary').focus();
+});
+
 function accountChannel(source) {
   return { alipay: '支付宝', phone: '益世界 APP', douyin: '抖音小游戏', 'douyin-mitm': '抖音小游戏', mitm: '微信小游戏', wechat: '微信小游戏' }[source] || '已导入账号';
 }
@@ -1822,7 +1974,8 @@ function renderAccounts() {
       channel: accountChannel(account.source),
       status: connectingAccounts.has(account.id) ? '连接中…' : connectionStatus(status),
       role: seen?.nickname || '待连接读取',
-      world: seen?.worldName || '待连接读取',
+      world: account.hasSiblingRoles && account.loginWorldName && seen?.worldName && seen.worldName !== account.loginWorldName
+        ? account.loginWorldName + '（现 ' + seen.worldName + '）' : seen?.worldName || account.loginWorldName || '待连接读取',
       level: seen?.level == null ? '—' : String(seen.level),
       power: seen?.power == null ? '—' : fmt(seen.power),
       seen: seen?.at ? '更新于 ' + when(seen.at) : '连接后更新角色资料',
@@ -1845,6 +1998,10 @@ function renderAccounts() {
     loop.disabled = hostingActions.has(account.id) || !!status.loopStopping || (!running && account.id === current && loopAccount !== current);
     loop.textContent = status.loopStopping ? '暂停中…' : hostingActions.has(account.id) ? '处理中…' : running ? '暂停挂机' : '开始挂机';
     loop.title = running ? '停止此账号自动循环，保留游戏连接和手动操作' : '按此账号已保存的任务持续挂机，直到手动暂停';
+    if (account.hasSiblingRoles && status.paused && !loop.disabled) {
+      loop.textContent = '切换并托管';
+      loop.title = '先暂停同一账号的其他角色，再按本角色的配置开始托管';
+    }
     if (box.children[index] !== card) box.insertBefore(card, box.children[index] || null);
   });
 }
@@ -1877,6 +2034,23 @@ async function renderWorlds() {
     const enter = smallButton('进入');
     enter.onclick = () => enterWorld(world.worldId);
     top.appendChild(enter);
+    if (role.id) {
+      const save = smallButton(world.saved ? '已添加' : '添加角色');
+      save.disabled = world.saved;
+      save.onclick = async () => {
+        save.disabled = true;
+        try {
+          await call('/api/worlds/save-role?account=' + encodeURIComponent(owner), {
+            method: 'POST', body: JSON.stringify({ confirm: true, worldId: world.worldId }),
+          });
+          if (current !== owner) return;
+          save.textContent = '已添加';
+          await loadAccounts(false);
+          renderAccounts();
+        } catch (error) { save.disabled = false; reportError(error); }
+      };
+      top.appendChild(save);
+    }
     row.appendChild(top);
     box.appendChild(row);
   }

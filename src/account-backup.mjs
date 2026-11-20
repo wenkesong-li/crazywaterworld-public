@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
-import { ACCOUNTS_PATH, accountFromCredential, loadStore } from './accounts.mjs';
+import { ACCOUNTS_PATH, accountFromCredential, loadStore, loginProfiles, matchingProfile, refreshProfileLogin, worldProfileId } from './accounts.mjs';
 import { accountKey } from './usage-ledger.mjs';
 import { atomicJson, readJson, withFileLock } from './json-store.mjs';
 import { exportAutomationSettings, importAutomationSettings, loadAutomationSettings,
@@ -13,8 +13,9 @@ const plain = value => value !== null && typeof value === 'object' && !Array.isA
 // Only portable account data belongs in a backup; runtime recovery and hosting
 // flags remain local, even when the user includes game settings.
 function portableAccount(account) {
-  return structuredClone(Object.fromEntries(['id', 'label', 'url', 'login', 'loginFrameHex',
-    'source', 'capturedAt', 'addedAt', 'lastSeen'].map(key => [key, account[key] ?? null])));
+  return structuredClone({ ...Object.fromEntries(['id', 'label', 'url', 'login', 'loginFrameHex',
+    'source', 'capturedAt', 'addedAt', 'lastSeen'].map(key => [key, account[key] ?? null])),
+    ...(account.roleId ? { roleId: account.roleId } : {}) });
 }
 
 function savedSettings(account) {
@@ -55,6 +56,7 @@ export function parseAccountBackup(document) {
     throw new Error('请选择本工具导出的账号 JSON 文件（版本 1）');
   }
   const ids = new Set();
+  const roles = new Set();
   const accounts = document.accounts.map((row, index) => {
     const fail = message => { throw new Error(`第 ${index + 1} 个账号：${message}`); };
     if (!plain(row) || !plain(row.login) || !plain(row.login.eworldParams)
@@ -66,11 +68,18 @@ export function parseAccountBackup(document) {
     if (row.label != null && typeof row.label !== 'string') fail('账号备注必须是文本');
     if (row.loginFrameHex != null && (typeof row.loginFrameHex !== 'string' || !/^(?:[0-9a-f]{2})+$/i.test(row.loginFrameHex))) fail('登录帧必须是完整的十六进制字节');
     const account = accountFromCredential(row, { label: row.label ?? null });
+    if (row.roleId != null) {
+      if (typeof row.roleId !== 'string' || !/^[1-9]\d{0,18}$/.test(row.roleId)) fail('角色编号无效');
+      account.roleId = row.roleId;
+    }
     // 备份只恢复账号资料；启停偏好保留本机值，新增账号在导入计划中默认关闭。
     delete account.automation;
     accountKey(account.id);
-    if (row.id !== account.id) fail('账号标识与登录凭据或渠道不一致');
-    if (ids.has(account.id)) fail('文件中包含重复账号');
+    const roleId = worldProfileId(account);
+    if (row.id !== account.id && !(roleId && row.id === roleId)) fail('账号标识与登录凭据或渠道不一致');
+    account.id = row.id;
+    if (ids.has(account.id) || roleId && roles.has(roleId)) fail('文件中包含重复账号');
+    if (roleId) roles.add(roleId);
     ids.add(account.id);
     for (const key of ['addedAt', 'capturedAt']) {
       if (row[key] != null && (typeof row[key] !== 'string' || !Number.isFinite(Date.parse(row[key])))) fail('账号时间格式无效');
@@ -103,11 +112,25 @@ function importPlan(document) {
   const next = structuredClone(store);
   let created = 0, updated = 0;
   const settingsEntries = [], baseline = [];
+  let activeId;
   for (const { account, settings } of backup.accounts) {
+    const importedId = account.id;
+    const profiles = loginProfiles(next, account);
+    const existing = matchingProfile(next, account);
+    if (existing) {
+      account.id = existing.id;
+      if (!Number(account.login.worldId) && existing.login.worldId) {
+        account.login.worldId = existing.login.worldId;
+        account.loginFrameHex = null;
+      }
+    } else if (profiles.some(row => row.id === importedId)) account.id = worldProfileId(account);
+    baseline.push(profiles.map(row => [row.id, row.login.worldId]));
+    if (importedId === backup.activeId) activeId = account.id;
     const index = next.accounts.findIndex(row => row.id === account.id);
+    if (index >= 0 && !existing) throw new Error('角色记录标识冲突');
     baseline.push(index < 0 ? null : next.accounts[index]);
     if (index < 0) {
-      next.accounts.push({ ...account, automation: { enabled: false, autoStart: false } });
+      next.accounts.push({ ...account, automation: { enabled: false, autoStart: false, ...(profiles.length ? { paused: true } : {}) } });
       created++;
     } else {
       const previous = next.accounts[index];
@@ -115,13 +138,22 @@ function importPlan(document) {
         addedAt: previous.addedAt ?? account.addedAt, lastSeen: previous.lastSeen ?? account.lastSeen };
       updated++;
     }
+    const family = loginProfiles(next, account);
+    if (family.length > 1) {
+      const newest = family.reduce((best, row) =>
+        (Date.parse(row.capturedAt) || 0) > (Date.parse(best.capturedAt) || 0) ? row : best, account);
+      for (const row of family) {
+        if (row.id !== newest.id) refreshProfileLogin(row, newest);
+      }
+      baseline.push(loginProfiles(store, account));
+    }
     if (settings) {
       const entry = loadAutomationSettings(account.id);
       settingsEntries.push({ id: account.id, settings, revision: entry.revision });
       baseline.push(entry);
     }
   }
-  if (!store.activeId) next.activeId = backup.activeId;
+  if (!store.activeId) next.activeId = activeId;
   const token = createHash('sha256').update(JSON.stringify([document, store.activeId, baseline])).digest('hex');
   return { next, settingsEntries, summary: { created, updated, settingsCount: settingsEntries.length, token } };
 }

@@ -97,7 +97,8 @@ export async function serviceGuildForts(client,protocol,config,{player,getSettin
   const delay=seconds=>scheduler?.defer('guildFort',scheduler.now()+seconds);
   watch(client,scheduler);
   if(!active())return finish({skipped:true,reason:'联盟工事捐赠已关闭'});
-  if(scheduler&&!scheduler.due('guildFort'))return finish({skipped:true,reason:'等待下次检查'});
+  if(scheduler&&!scheduler.due('guildFort'))return {key:'guildFort',label:'联盟工事捐赠',skipped:true,
+    reason:scheduler.status?.('guildFort')?.text || '等待下次检查'};
   if(busy.has(client))return finish({skipped:true,reason:'正在核对联盟工事'});
   busy.add(client);
   try{

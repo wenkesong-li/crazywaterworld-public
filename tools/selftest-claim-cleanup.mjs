@@ -30,6 +30,9 @@ function fixture(kind) {
   });
   group[toggle] = true; group[choice] = ['BLUE'];
   const f = { kind, settings, group, toggle, choice, prefix, file, item, rows: [item(1)], occupied: [],
+    player: { level: 60, worldId: 1001001, worldOpenTime: Math.floor(Date.now() / 1000) - 30 * 86400 },
+    mainFormation: {}, leagueFormations: [], fleetBuildings: [],
+    expeditionFormation: {}, ultraRaidId: 0, ultraForms: [], tournamentTeams: [],
     enabled: true, remove: true, writes: [], calls: [], ledger: createUsageLedger(account, { file }),
     beforeRead: null, writeError: null, afterWrite: null, mutateBeforeWrite: null };
   const writeName = equipment ? 'DecomposeEquipRequest' : 'FreePetRequest';
@@ -53,9 +56,13 @@ function fixture(kind) {
       const replies = {
         AllHeroRequest: { heroes: [{ equips: f.occupied.map(number => item(number)) }] },
         EquipsRequest: { equip: f.rows }, AllPetRequest: { pets: f.rows },
-        OnWaterRequest: { building: [{ buildingId: '1海兽值守', level: 1, petServe: { petUid: f.occupied.length ? uid(f.occupied[0]) : 0 } }] },
-        GetFormationRequest: { formation: {} },
-        LeagueInfoRequest: { dan: 1, settleTime: 0, bonusItemNum: 0, nextPointTime: 0, predictDan: 0, maxPage: 0, roomDan: 1, ownFormations: [] },
+        OnWaterRequest: { building: [{ buildingId: '1海兽值守', level: 1, petServe: { petUid: f.occupied.length ? uid(f.occupied[0]) : 0 } }, ...f.fleetBuildings] },
+        GetFormationRequest: { formation: f.mainFormation },
+        LeagueInfoRequest: { dan: 1, settleTime: 0, bonusItemNum: 0, nextPointTime: 0, predictDan: 0, maxPage: 0, roomDan: 1, ownFormations: f.leagueFormations },
+        ExpeditionInfoRequest: { raidId: 1, formation: f.expeditionFormation },
+        UltraOpenRequest: { raidId: f.ultraRaidId },
+        UltraInfoRequest: { forms: f.ultraForms, easyForm: {} },
+        TournamentFormationRequest: { team: f.tournamentTeams },
       };
       assert(name in replies, '夹具未声明读取 ' + name);
       return protocol[response].decode(protocol[response].encode(replies[name]).finish());
@@ -64,7 +71,7 @@ function fixture(kind) {
   });
   f.client = newClient();
   f.newClient = newClient;
-  f.run = (client = f.client, ledger = f.ledger) => cleanupAfterClaim(client, config, settings, ledger, kind, () => f.enabled);
+  f.run = (client = f.client, ledger = f.ledger) => cleanupAfterClaim(client, config, settings, ledger, kind, () => f.enabled, f.player);
   f.restart = () => { f.ledger = createUsageLedger(account, { file }); f.client = newClient(); };
   f.key = number => prefix + id(number);
   return f;
@@ -75,7 +82,7 @@ async function check(name, run) {
 }
 
 for (const kind of ['forge', 'pet']) {
-  await check(kind + ' 开关、品质、大 UID、占用和养成保护', async () => {
+  await check(kind + ' 开关、品质、大 UID 和占用筛选', async () => {
     const f = fixture(kind);
     f.group[f.toggle] = false; assert.equal(await f.run(), null);
     f.group[f.toggle] = true; f.group[f.choice] = [];
@@ -84,7 +91,8 @@ for (const kind of ['forge', 'pet']) {
     f.rows = [f.item(1), f.item(2), f.item(3, 'BLUE', { level: 4 }), f.item(4, 'ORANGE'), f.item(5, 'BLUE', { star: 3 }), f.item(6)];
     f.occupied = [2];
     assert.equal((await f.run()).status, 'confirmed');
-    assert.deepEqual(f.writes, [[1, 5, 6].map(id)]);
+    const expected = kind === 'forge' ? [1, 5, 6] : [1, 3, 5, 6];
+    assert.deepEqual(f.writes, [expected.map(id)]);
     await f.run(); assert.equal(f.writes.length, 1);
   });
 
@@ -102,6 +110,7 @@ for (const kind of ['forge', 'pet']) {
   await check(kind + ' 未知结果存活 UID 重新完整复核后恢复重试', async () => {
     const f = fixture(kind); f.remove = false;
     await f.run(); f.restart(); f.remove = true;
+    if (kind === 'pet') f.rows[0].level = 25;
     let attempts;
     f.mutateBeforeWrite = () => { attempts = f.ledger.keyRecords()[f.key(1)].details.attempts; };
     const recovered = await f.run();
@@ -119,15 +128,16 @@ for (const kind of ['forge', 'pet']) {
     assert.deepEqual(f.writes, [[id(1)]]); assert(Object.values(f.ledger.keyRecords()).every(record => record.confirmed));
   });
 
-  await check(kind + ' 玩家穿戴、上阵、养成或改品质后旧记录不触发处理', async () => {
-    for (const change of ['occupied', 'level', 'quality']) {
+  await check(kind + ' 已有待确认记录时重新检查处理条件', async () => {
+    const protectedChanges = kind === 'forge' ? ['occupied', 'level', 'quality'] : ['occupied', 'quality'];
+    for (const change of protectedChanges) {
       const f = fixture(kind); f.remove = false; await f.run(); f.restart();
       if (change === 'occupied') f.occupied = [1];
       if (change === 'level') f.rows[0].level = 2;
       if (change === 'quality') f.group[f.choice] = ['PURPLE'];
       const result = await f.run();
       assert.equal(f.writes.length, 1); assert.equal(f.rows.length, 1);
-      assert.match(result.note, /当前占用、品质或养成/); assert.equal(f.ledger.snapshot().uncertain, 0);
+      assert.match(result.note, /解除旧记录/); assert.equal(f.ledger.snapshot().uncertain, 0);
     }
   });
 
@@ -221,21 +231,155 @@ for (const kind of ['forge', 'pet']) {
   });
 }
 
-await check('蓝紫橙自然高星可放生，红色已升星保持保护', async () => {
+await check('四种品质的闲置海兽均按所选品质放生，包括升星红宠', async () => {
   const f = fixture('pet'); f.group.releaseQualities = ['BLUE', 'PURPLE', 'ORANGE', 'RED'];
   f.rows = []; const expected = []; let number = 1;
   for (const quality of f.group.releaseQualities) for (const star of [0, 1, 2, 5]) {
     f.rows.push(f.item(number, quality, { star }));
-    if (quality !== 'RED' || star === 0) expected.push(id(number));
+    expected.push(id(number));
     number++;
   }
   assert.equal((await f.run()).status, 'confirmed'); assert.deepEqual(f.writes, [expected]);
-  assert.deepEqual(f.rows.map(row => row.star), [1, 2, 5]);
+  assert.equal(f.rows.length, 0);
+});
+
+await check('品质匹配的闲置海兽无论养成都放生，未选品质、值守和编队海兽保留', async () => {
+  const f = fixture('pet');
+  f.group.releaseQualities = ['BLUE', 'PURPLE', 'ORANGE'];
+  const campAttr = { attrValue: { attr: 6, value: 0.024, rating: 0 }, heroCamp: '阵营B' };
+  const naturalBlue = { petId: '蓝宠物3', extAttrIdx: 1, extAttrs: [campAttr] };
+  const purpleAttrs = [
+    { attrValue: { attr: 6, value: 0.0288, rating: 0 }, heroCamp: '阵营B' },
+    { attrValue: { attr: 5, value: 0.0288, rating: 0 }, heroCamp: '阵营A' },
+  ];
+  const blue = (number, overrides) => f.item(number, 'BLUE', { ...naturalBlue, ...overrides });
+  f.rows = [
+    blue(1), f.item(2, 'PURPLE', { extAttrIdx: 1, extAttrs: purpleAttrs }),
+    blue(3), blue(4), blue(5),
+    blue(6, { grade: 1 }), blue(7, { profFeed: [{ heroProf: '输出', attrFeed: [{ attr: 6, times: 1, value: 1 }] }] }),
+    blue(8, { rerollAttrs: [campAttr] }), blue(9, { extAttrs2: [campAttr] }),
+    f.item(10, 'RED'), f.item(11, 'ORANGE', { level: 30, extAttrIdx: 2, extAttrs2: [campAttr] }),
+  ];
+  f.occupied = [3];
+  f.mainFormation = { petUid: uid(4) };
+  f.leagueFormations = [{ index: 1, presetId: 0, petUid: uid(5) }];
+  const result = await f.run();
+  assert.equal(result?.status, 'confirmed', result?.error);
+  assert.match(result.note, /跳过/);
+  assert.deepEqual(f.writes, [[1, 2, 6, 7, 8, 9, 11].map(id)]);
+  assert.deepEqual(f.rows.map(row => exactAutomationId(row.uid)), [3, 4, 5, 10].map(id));
+});
+
+await check('所选海兽全部值守或在编队时报告跳过', async () => {
+  const f = fixture('pet');
+  f.rows = [f.item(1), f.item(2), f.item(3), f.item(4)];
+  f.occupied = [1];
+  f.mainFormation = { petUid: uid(2) };
+  f.leagueFormations = [{ index: 1, presetId: 0, petUid: uid(3) }];
+  f.fleetBuildings = [{ buildingId: '1舰队', level: 1, fleet: { formation: { petUid: uid(4) } } }];
+  const result = await f.run();
+  assert.equal(result?.skipped, true);
+  assert.match(result.reason, /跳过 4 只/);
+  assert.deepEqual(f.writes, []);
+  assert.equal(f.ledger.snapshot().uncertain, 0);
+});
+
+await check('远征、极限试炼和巅峰擂台的独立编队均保留海兽', async () => {
+  const f = fixture('pet');
+  f.rows = [1, 2, 3, 4].map(number => f.item(number, 'BLUE', { level: 30 }));
+  f.expeditionFormation = { petUid: uid(1) };
+  f.ultraRaidId = 1;
+  f.ultraForms = [{ index: 1, presetId: 0, petUid: uid(2) }];
+  f.client.tournament = { stageId: 3, qualified: true };
+  f.tournamentTeams = [{ uid: uid(30), formation: { petUid: uid(3) } }];
+  const result = await f.run();
+  assert.equal(result?.status, 'confirmed', result?.error);
+  assert.match(result.note, /跳过 3 只/);
+  assert.deepEqual(f.writes, [[id(4)]]);
+  assert.deepEqual(f.rows.map(row => exactAutomationId(row.uid)), [1, 2, 3].map(id));
+});
+
+await check('尚未开放的远征、极限试炼和擂台不阻塞闲置海兽放生', async () => {
+  const f = fixture('pet');
+  f.player.level = 1;
+  f.player.worldOpenTime = Math.floor(Date.now() / 1000);
+  assert.equal((await f.run()).status, 'confirmed');
+  assert.deepEqual(f.writes, [[id(1)]]);
+  for (const name of ['ExpeditionInfoRequest', 'UltraOpenRequest', 'UltraInfoRequest', 'TournamentFormationRequest']) {
+    assert(!f.calls.includes(name), name);
+  }
+  const g = fixture('pet');
+  g.player.worldOpenTime = Math.floor(Date.now() / 1000);
+  g.client.tournament = { stageId: 3, qualified: false };
+  assert.equal((await g.run()).status, 'confirmed');
+  assert.deepEqual(g.writes, [[id(1)]]);
+  assert(g.calls.includes('UltraOpenRequest'));
+  assert(!g.calls.includes('UltraInfoRequest'));
+  assert(!g.calls.includes('ExpeditionInfoRequest'));
+  assert(!g.calls.includes('TournamentFormationRequest'));
+});
+
+await check('已开放的编队回包读取失败时保留所选海兽', async () => {
+  const f = fixture('pet');
+  f.ultraRaidId = 1;
+  f.beforeRead = name => {
+    if (name === 'UltraInfoRequest') throw new Error('无法取得编队');
+  };
+  const result = await f.run();
+  assert.equal(result.ok, false);
+  assert.match(result.error, /无法取得编队/);
+  assert.deepEqual(f.writes, []);
+  assert.equal(f.ledger.snapshot().uncertain, 0);
+});
+
+await check('批量放生被拒后读回新增编队，仅重试原批次仍闲置的海兽', async () => {
+  const f = fixture('pet');
+  f.rows = [f.item(1), f.item(2), f.item(3)];
+  const attempts = [];
+  f.mutateBeforeWrite = picked => {
+    attempts.push(picked);
+    if (attempts.length === 1) {
+      f.mainFormation = { petUid: uid(2) };
+      f.rows[2].level = 5;
+      f.rows.push(f.item(4));
+      throw Object.assign(new Error('server prompt'), { prompt: {}, request: 'FreePetRequest' });
+    }
+  };
+  const result = await f.run();
+  assert.equal(result.status, 'confirmed');
+  assert.match(result.note, /跳过 1 只/);
+  assert.deepEqual(attempts, [[1, 2, 3].map(id), [1, 3].map(id)]);
+  assert.deepEqual(f.rows.map(row => exactAutomationId(row.uid)), [2, 4].map(id));
+  assert.deepEqual(Object.keys(f.ledger.keyRecords()), [f.key(1), f.key(3)]);
+  assert.equal(f.ledger.keyRecords()[f.key(1)].details.attempts, 2);
+  assert.equal(f.ledger.snapshot().uncertain, 0);
+});
+
+await check('放生拒绝后按实际占用报告跳过，通用错误保留原原因', async () => {
+  for (const occupied of [true, false]) {
+    const f = fixture('pet');
+    let attempts = 0;
+    f.mutateBeforeWrite = () => {
+      attempts++;
+      if (occupied) f.mainFormation = { petUid: uid(1) };
+      throw Object.assign(new Error('server prompt'), { prompt: {}, request: 'FreePetRequest' });
+    };
+    const result = await f.run();
+    if (occupied) {
+      assert.equal(result.skipped, true);
+      assert.match(result.reason, /跳过 1 只/);
+    } else {
+      assert.equal(result.status, 'rejected');
+      assert.equal(result.error, 'server prompt');
+    }
+    assert.equal(attempts, 1);
+    assert.equal(f.ledger.hasKey(f.key(1)), false);
+  }
 });
 
 await check('锻造正常入口无新领取时也处理闲置库存', async () => {
   const f = warForgeFixture(), settings = warForgeSettings();
-  Object.assign(settings.forge, { decompose: true, decomposeQualities: ['BLUE'], dailyLimit: 0 });
+  Object.assign(settings.forge, { decompose: true, decomposeQualities: ['BLUE'], craft: false });
   f.config.tables.EquipCfg = { data: [{ id: '旧装备', quality: 'BLUE' }] };
   f.state.equipment[0].refineLv = 0;
   const request = f.client.request;
@@ -265,7 +409,7 @@ await check('基地正常入口关闭领取仅开放生仍处理库存', async (
   const plan = planBaseAutomation(snapshot, config, f.settings);
   assert.equal(plan.actions.length, 0);
   const results = await runBaseAutomation(f.client, protocol, config, plan, {
-    getSettings: () => f.settings, ledger: f.ledger, enabled: () => true,
+    player: f.player, getSettings: () => f.settings, ledger: f.ledger, enabled: () => true,
   });
   assert.deepEqual(f.writes, [[id(1)]]);
   assert(results.some(row => row.step.kind === 'petRelease' && row.status === 'confirmed'));
@@ -285,4 +429,4 @@ await fishOnce(c,config,()=>true,{fishBook:true,onBookComplete:()=>closed++});as
 await fishOnce(c,config,()=>true,{fishBook:true,dryRun:true,onBookComplete:()=>closed++});assert.equal(casts,1);assert.equal(closed,1);
 const old={...exportAutomationSettings(defaultSettings()),version:1};delete old.settings.pet.release;delete old.settings.pet.releaseQualities;delete old.settings.forge.decompose;delete old.settings.forge.decomposeQualities;delete old.settings.gather.fishBook;
 assert.equal(importAutomationSettings(old).forge.decompose,false);
-console.log('通过：双招募时间、旧配置、满仓开拓及集齐停用、预览只读、精确品质/UID、占用和养成保护、未知结果复核恢复。');
+console.log('通过：双招募时间、旧配置、满仓开拓及集齐停用、预览只读、品质与占用筛选、未知结果复核恢复。');

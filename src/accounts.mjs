@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { worldName } from './world-name.mjs';
 
 // 账号身份使用 openId：同一个号重复登录或导入只刷新凭证，不重复创建记录。
@@ -22,6 +23,26 @@ export function accountId(credential) {
   if (typeof id !== 'string' || !id) return null;
   if (credential.source === 'alipay') return 'alipay:' + id;
   return ['douyin', 'douyin-mitm'].includes(credential.source) ? 'douyin:' + id : id;
+}
+
+export function loginProfiles(store, credential) {
+  const identity = accountId(credential);
+  if (!identity) return store.accounts.filter(account => account.id === credential.id);
+  return store.accounts.filter(account => accountId(account) === identity);
+}
+
+// 合服后的实际区服可能相同，登录入口（出生服）仍能区分两个角色。
+export function worldProfileId(credential) {
+  const world = Number(credential.login?.worldId);
+  if (!Number.isSafeInteger(world) || world <= 0) return null;
+  return 'role:' + createHash('sha256').update(JSON.stringify([accountId(credential), world])).digest('hex');
+}
+
+export function matchingProfile(store, credential, world = credential.login?.worldId) {
+  const profiles = loginProfiles(store, credential);
+  if (!Number(world)) return profiles.find(row => row.id === store.activeId) ?? profiles[0];
+  return profiles.find(row => Number(row.login.worldId) === Number(world))
+    ?? profiles.find(row => !Number(row.login.worldId));
 }
 
 // 网页和 CLI 要的都是这一小块，凭证本体不往外散。
@@ -85,28 +106,37 @@ export function saveStore(store) {
   fs.renameSync(tmp, ACCOUNTS_PATH);
 }
 
-// 抓到同一账号的新凭证就地替换（凭证会过期，token/sign 每次登录都变），
-// 但保留原来的人工标记与 lastSeen，只更新凭证本体。
-export function upsertAccount(store, credential, { label = null, now = new Date().toISOString() } = {}) {
+export function refreshProfileLogin(profile, credential, worldId = profile.login.worldId) {
+  profile.login = { ...credential.login, ...(worldId != null ? { worldId } : {}) };
+  profile.url = credential.url;
+  profile.source = credential.source;
+  profile.capturedAt = credential.capturedAt;
+  profile.loginFrameHex = Number(worldId || 0) === Number(credential.login.worldId || 0) ? credential.loginFrameHex : null;
+}
+
+// 抓到同一账号的新凭证就地刷新，各角色保留自己的登录入口、人工备注和配置。
+export function upsertAccount(store, credential, { label = null, now = new Date().toISOString(), refreshCredentials = true } = {}) {
   const fresh = accountFromCredential(credential, { label, now });
-  const index = store.accounts.findIndex((account) => account.id === fresh.id);
-  if (index < 0) {
+  const profiles = loginProfiles(store, credential);
+  const existing = matchingProfile(store, credential);
+  // 同一登录身份刷新一次凭据，所有入口使用新票据，各自保留登录区服。
+  for (const profile of profiles) {
+    if (!refreshCredentials && profile !== existing) continue;
+    const worldId = profile === existing && Number(fresh.login.worldId) ? fresh.login.worldId : profile.login.worldId;
+    refreshProfileLogin(profile, fresh, worldId);
+  }
+  if (!existing) {
+    if (profiles.length) {
+      fresh.id = worldProfileId(fresh);
+      fresh.automation.paused = true;
+    }
+    if (store.accounts.some(row => row.id === fresh.id)) throw new Error('角色记录标识冲突');
     store.accounts.push(fresh);
     if (!store.activeId) store.activeId = fresh.id;
     return { account: fresh, created: true };
   }
-  const previous = store.accounts[index];
-  const merged = {
-    ...previous,
-    label: label ?? previous.label,
-    url: fresh.url,
-    login: fresh.login,
-    loginFrameHex: fresh.loginFrameHex,
-    source: fresh.source,
-    capturedAt: fresh.capturedAt,
-  };
-  store.accounts[index] = merged;
-  return { account: merged, created: false };
+  if (label !== null) existing.label = label;
+  return { account: existing, created: false };
 }
 
 export function rememberSeen(account, player, now = new Date().toISOString()) {
@@ -163,7 +193,7 @@ function mask(value) {
   return `${text.slice(0, 4)}${'*'.repeat(8)}${text.slice(-4)}`;
 }
 
-export function describeAccount(account, { active = false } = {}) {
+export function describeAccount(account, { active = false, hasSiblingRoles = false } = {}) {
   const params = account.login?.eworldParams ?? {};
   const lastSeen = account.lastSeen
     ? { ...account.lastSeen, worldName: worldName(account.lastSeen.worldId) }
@@ -176,9 +206,16 @@ export function describeAccount(account, { active = false } = {}) {
     const remark = account.label && account.label !== lastSeen.nickname ? account.label : null;
     title = [remark, lastSeen.nickname, lastSeen.worldName].filter(Boolean).join(' · ');
   }
+  const loginWorld = account.login?.worldId;
+  const loginWorldName = worldName(loginWorld) || String(loginWorld || '');
+  if (hasSiblingRoles && loginWorldName && (!scanChannel || !lastSeen?.nickname || loginWorld !== lastSeen.worldId)) {
+    title += ' · ' + loginWorldName;
+  }
   return {
     id: account.id,
     title,
+    hasSiblingRoles,
+    loginWorldName,
     label: account.label ?? null,
     url: account.url,
     source: account.source,

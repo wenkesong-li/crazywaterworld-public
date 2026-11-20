@@ -18,7 +18,8 @@ const { runLoop } = await import('../src/loop.mjs');
 const { edictPassActivity } = await import('../src/seasonal-activities.mjs');
 const { activityEntries, runActivity } = await import('../src/activities.mjs');
 const { rewardSchedule } = await import('../src/reward-schedule.mjs');
-const { CHEST_ROUND_LIMIT, COMIC_ROUND_LIMIT, claimComicDrama, claimTournamentDaily, openSeasonChests, rememberTournament, seasonChestAccess } = await import('../src/side-rewards.mjs');
+const { CHEST_ROUND_LIMIT, COMIC_ROUND_LIMIT, claimComicDrama, claimTournamentDaily, openSeasonChests, seasonChestAccess } = await import('../src/side-rewards.mjs');
+const { GameClient } = await import('../src/client.mjs');
 
 process.on('uncaughtException', (error) => {
   console.error(error.stack);
@@ -125,15 +126,24 @@ await test('法旨战令在活动面板可手动执行', async () => {
 const tournamentConfig = { tables: { ModuleOpenCfg: { data: [{ moduleId: '巅峰擂台赛', playerLevel: 18 }] } } };
 const yesterday = () => now() - 86400;
 
-await test('擂台赛推送用真实协议解析，阶段更新生效', () => {
-  const client = {};
-  const open = protocol.SCTournamentOpen.decode(protocol.SCTournamentOpen.encode({ contestId: 7, state: { currentStageId: 3, nextMatchTimeId: 0, nextMatchTime: 0 }, lastClaimDailyGiftTime: 123, adjustHero: [] }).finish());
-  rememberTournament(client, 'SCTournamentUpdate', { state: { currentStageId: 5 } });
-  assert.equal(client.tournament, undefined, '未收到开放推送时不建立状态');
-  rememberTournament(client, 'SCTournamentOpen', open);
-  assert.deepEqual(client.tournament, { stageId: 3, lastClaimDailyGiftTime: 123 });
-  rememberTournament(client, 'SCTournamentUpdate', { state: { currentStageId: 8 } });
-  assert.equal(client.tournament.stageId, 8);
+await test('游戏连接记录擂台赛阶段和参赛资格，新赛期和断开清除旧状态', () => {
+  const client = new GameClient({ protocol });
+  const push = (name, body) => client.onMessage(client.codec.encode(name, 0, body));
+  const open = { contestId: 7, state: { currentStageId: 3, nextMatchTimeId: 0, nextMatchTime: 0 }, lastClaimDailyGiftTime: 123, adjustHero: [] };
+  push('SCTournamentContestantUpdate', { contestant: { qualified: true } });
+  push('SCTournamentUpdate', { state: { currentStageId: 5 } });
+  assert.equal(client.tournament, undefined);
+  push('SCTournamentOpen', { ...open, contestant: { qualified: true } });
+  assert.deepEqual(client.tournament, { stageId: 3, qualified: true, lastClaimDailyGiftTime: 123 });
+  push('SCTournamentContestantUpdate', { contestant: { qualified: false } });
+  assert.deepEqual(client.tournament, { stageId: 3, qualified: false, lastClaimDailyGiftTime: 123 });
+  push('SCTournamentContestantUpdate', { contestant: { qualified: true } });
+  push('SCTournamentUpdate', { state: { currentStageId: 8 } });
+  assert.deepEqual(client.tournament, { stageId: 8, qualified: true, lastClaimDailyGiftTime: 123 });
+  push('SCTournamentOpen', { ...open, contestId: 8 });
+  assert.equal(client.tournament.qualified, false);
+  client.stop();
+  assert.equal(client.tournament, undefined);
 });
 
 await test('擂台赛未开放、已结束、等级不足或今日已领时不发送', async () => {
@@ -156,7 +166,7 @@ await test('擂台赛每日礼包只领一次，领取后写回时间，发送�
     assert.equal(name, 'TournamentClaimDailyGiftRequest');
     return reward;
   });
-  f.client.tournament = { stageId: 3, lastClaimDailyGiftTime: yesterday() };
+  f.client.tournament = { stageId: 3, qualified: false, lastClaimDailyGiftTime: yesterday() };
   await claimTournamentDaily(f.client, tournamentConfig, { ...f.options, enabled: () => false });
   assert.equal(f.client.sent.length, 0);
   assert.equal(f.ledger.hasKey('tournament-daily:' + Math.floor((now() + 28800) / 86400)), false);
@@ -514,7 +524,6 @@ await test('四项经过真实整轮入口；赛季宝箱默认关闭时不读�
 });
 
 await test('控制台在登录时记住擂台赛推送', async () => {
-  const { GameClient } = await import('../src/client.mjs');
   const { saveStore } = await import('../src/accounts.mjs');
   const { createConsole } = await import('../src/server.mjs');
   const live = new Set();
@@ -537,7 +546,7 @@ await test('控制台在登录时记住擂台赛推送', async () => {
     await fetch('http://127.0.0.1:' + app.server.address().port + '/api/overview?account=a', { signal: AbortSignal.timeout(5000) }).then((reply) => reply.text());
     const client = app.sessions.get('a')?.client;
     assert(client?.connected, '未建立连接');
-    assert.deepEqual(client.tournament, { stageId: 4, lastClaimDailyGiftTime: 456 });
+    assert.deepEqual(client.tournament, { stageId: 4, qualified: false, lastClaimDailyGiftTime: 456 });
     client.emit('message', { name: 'SCTournamentUpdate', body: { state: { currentStageId: 8 } } });
     assert.equal(client.tournament.stageId, 8);
   } finally {

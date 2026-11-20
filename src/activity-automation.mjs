@@ -74,13 +74,23 @@ export function weeklyActivityEnabled(settings, type) {
   return !key || controlEnabled(settings, key);
 }
 
+const supplyTypes = [4, 6, 7];
+
 export function activityTaskEnabled(settings, key) {
-  if (key === 'weekSupplyFree') return [4, 6, 7].some(type => weeklyActivityEnabled(settings, type));
+  if (key === 'weekSupplyFree') return supplyTypes.some(type => weeklyActivityEnabled(settings, type));
   const control = taskControls.get(key);
   return !control || controlEnabled(settings, control.key);
 }
 
+export function activityTaskBlocker(settings, key) {
+  if (activityTaskEnabled(settings, key)) return null;
+  if (key === 'weekSupplyFree') return supplyTypes.map(type => controls.get(weeklyControls[type]).label).join('、') + '均已关闭';
+  return taskControls.get(key).label;
+}
+
 export function activityProductionEnabled(settings, source) {
+  if (source === 'petAdvance') return !settings || !!(settings.loop?.world && settings.pet?.enabled && settings.pet.advance);
+  if (source === 'petFeed') return !settings || !!(settings.loop?.world && settings.pet?.enabled && settings.pet.feed);
   if (source === 'merchant') return controlEnabled(settings, 'weekOrder.enabled');
   if (source === 'heroRaid') return settings?.heroRaid?.enabled !== false;
   return true;

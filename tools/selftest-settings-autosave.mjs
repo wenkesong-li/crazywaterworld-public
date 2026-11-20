@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { SETTINGS_SCHEMA_VERSION, defaultSettings, validateSettings, saveAutomationSettings, loadAutomationSettings, importAutomationSettings, exportAutomationSettings } from '../src/automation-settings.mjs';
+import { SETTINGS_SCHEMA_VERSION, defaultSettings, validateSettings, saveAutomationSettings, loadAutomationSettings, importAutomationSettings, exportAutomationSettings, settingsCatalog } from '../src/automation-settings.mjs';
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-settings-autosave-'));
 const script = fs.readFileSync(new URL('../src/settings-ui.js', import.meta.url), 'utf8');
@@ -775,12 +775,19 @@ await test('草稿导出使用后端当前版本且不提前保存用户修改',
 
 await test('三支硅矿舰队独立编辑自动保存，刷新和切号保留各自字段', async () => {
   const f = fixture(); await f.load();
-  f.set('silicon.fleets.0.enabled', true); f.set('silicon.fleets.0.tier', 'PURPLE');
+  const fields = f.groups.find(group => group.id === 'silicon').fields;
+  const catalog = settingsCatalog();
+  for (let i = 0; i < 3; i++) {
+    const field = fields.find(field => field.key === 'silicon.fleets.' + i + '.tiers');
+    assert.equal(field.kind, 'multi');
+    assert.deepEqual(catalog[field.catalog].map(item => item.label), ['初等', '中等', '高等']);
+  }
+  f.set('silicon.fleets.0.enabled', true); f.set('silicon.fleets.0.tiers', ['PURPLE', 'ORANGE']);
   f.set('silicon.fleets.1.safePlayers', ['甲']); f.set('silicon.fleets.2.dailyAttackLimit', 7);
   f.set('guildShip.redStartTime', '21:30'); await f.tick(600);
   assert.equal(f.posts().length, 1); assert(Array.isArray(f.view('a').settings.silicon.fleets));
   await f.load(true);
-  assert.equal(f.editor.draft.silicon.fleets[0].tier, 'PURPLE');
+  assert.deepEqual(f.editor.draft.silicon.fleets[0].tiers, ['PURPLE', 'ORANGE']);
   assert.deepEqual(f.editor.draft.silicon.fleets[1].safePlayers, ['甲']);
   assert.equal(f.editor.draft.silicon.fleets[2].dailyAttackLimit, 7);
   assert.equal(f.editor.draft.guildShip.redStartTime, '21:30');
@@ -874,7 +881,7 @@ await test('攻守目标控件独立显示、校验和自动保存，刷新及�
     querySelectorAll() { return []; }, focus() {}, scrollIntoView() {},
   });
   const clear = element => { element.childNodes = []; return element; };
-  const renderer = newStateFunction('configEditor', 'configSet', 'el', 'clear', 'makeHelpTip', 'configPlacePanel', `
+  const renderer = newStateFunction('configEditor', 'configSet', 'el', 'clear', 'makeHelpTip', 'configOpenSearchPanel', `
     const configGet = key => key.split('.').reduce((value, part) => value[part], configEditor.draft);
     ${section('function configUpdateVisibility(', 'function configRender(')}
     ${section('function configRenderField(', 'function configRenderUsage(')}

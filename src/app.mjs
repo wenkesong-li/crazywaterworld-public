@@ -7,7 +7,7 @@ import { parseArgs } from 'node:util';
 import { GameClient } from './client.mjs';
 import { getProtocol as loadProtocol } from './proto.mjs';
 import { createConsole, openBrowser } from './server.mjs';
-import { loadStore, saveStore, pickAccount, removeAccount, setActive, describeAccount, revealAccount, upsertAccount, ACCOUNTS_PATH, LEGACY_CREDENTIALS_PATH } from './accounts.mjs';
+import { loadStore, saveStore, pickAccount, removeAccount, setActive, describeAccount, revealAccount, matchingProfile, upsertAccount, ACCOUNTS_PATH, LEGACY_CREDENTIALS_PATH } from './accounts.mjs';
 import { listWorlds, listGroup, enterWorld, describeRole } from './worlds.mjs';
 import { collectState, summarize, formatState } from './game.mjs';
 import { ACTIONS, listActions, runAction, assertAllowed, buildBody } from './actions.mjs';
@@ -755,7 +755,7 @@ async function accountsCli(args) {
     console.log(`游戏 uid=${game.uid}`);
     console.log(`openId=${params.openId}  token=${client.mask(params.token)}  sign=${client.mask(params.sign)}`);
 
-    const existing = store.accounts.find((account) => account.id === params.openId);
+    const existing = matchingProfile(store, credential);
     if (!values.save) {
       console.log('未加 --save，未写入账号');
       return;

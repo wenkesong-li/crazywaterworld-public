@@ -12,11 +12,11 @@ function resetProductionPlan() {
   setConsoleValue('productionPlan', 'productionPlanOwner', null);
   setConsoleValue('productionPlan', 'productionPlanBusy', false);
   clear($('production-plan-result'));
-  $('production-plan-status').textContent = '连接后可计算';
+  $('production-plan-status').textContent = '';
 }
 
 function productionPlanTime(value) {
-  if (!Number.isFinite(value)) return '待确认';
+  if (!Number.isFinite(value)) return '时间待定';
   return new Date(value * 1000).toLocaleString('zh-CN', {
     timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
@@ -31,63 +31,102 @@ function productionPlanDuration(value) {
   return (hours ? hours + '小时' : '') + (minutes ? minutes + '分' : '') + seconds % 60 + '秒';
 }
 
+function productionPlanSummary(data) {
+  const orders = data.orders || [];
+  const note = text => el('p', 'production-plan-summary', text);
+  if (orders.length && orders.every(order => order.skipped)) return note('本次需求均已跳过，请检查下方的工厂条件。');
+  if (data.status === 'optimal' && Array.isArray(data.orders) && !orders.length) return note('当前没有需要备料的需求。');
+  if (Number.isFinite(data.completionAt)) {
+    const subject = ['feasible-orders', 'feasible-demands'].includes(data.scope) ? '参与排产的需求' : '全部需求';
+    if (data.upperBound === 0) return note(subject + '现在即可备齐。');
+    const summary = note('');
+    summary.appendChild(el('span', null, subject + '预计备齐'));
+    summary.appendChild(el('strong', null, productionPlanTime(data.completionAt)));
+    if (Number.isFinite(data.upperBound)) summary.appendChild(el('span', 'dim', '约需 ' + productionPlanDuration(data.upperBound)));
+    return summary;
+  }
+  if (data.missingReads?.length) return note('生产数据还不完整，暂时无法预计备齐时间。请稍后重新生成计划。');
+  if (data.status === 'infeasible') return note('按当前条件，无法备齐所有需求。');
+  return note('暂时无法预计全部需求的备齐时间。');
+}
+
+function planMaterialText(item) {
+  return (item.name || item.id) + (Number.isSafeInteger(item.num) ? ' ×' + item.num : ' 数量待定');
+}
+
+function planMaterialNode(item, recipes, ancestors, group) {
+  const recipe = recipes.get(item.id);
+  const branch = recipe?.inputs?.length && recipe.output > 0 && !ancestors.includes(item.id);
+  const label = el(branch ? 'summary' : 'span', 'plan-material-label');
+  if (item.icon) label.appendChild(iconEl(item.icon, 20, item.name || item.id));
+  label.appendChild(el('span', null, planMaterialText(item)));
+  const row = el('li');
+  if (!branch) {
+    row.appendChild(label);
+    return row;
+  }
+  const details = el('details');
+  if (group) details.name = group;
+  details.appendChild(label);
+  details.ontoggle = () => {
+    if (!details.open || details.children.length > 1) return;
+    const batches = Math.ceil(item.num / recipe.output);
+    const children = el('ul', 'plan-material-branches');
+    for (const input of recipe.inputs) {
+      children.appendChild(planMaterialNode({ ...input, num: input.num * batches }, recipes, [...ancestors, item.id]));
+    }
+    details.appendChild(children);
+  };
+  row.appendChild(details);
+  return row;
+}
+
+function planMaterialList(items, recipes, group) {
+  const tree = el('ul', 'plan-material-roots');
+  for (const item of items) tree.appendChild(planMaterialNode(item, recipes, [], group));
+  return tree;
+}
+
+function planDemandRow(order, index, recipes, snapshotTime) {
+  const materials = el('div', 'plan-demand-materials');
+  materials.appendChild(planMaterialList(order.requirements || [], recipes, 'production-plan-products-' + index));
+  if (order.reason) materials.appendChild(el('p', 'plan-demand-reason', order.reason));
+  let status;
+  if (order.skipped) status = chip('waiting', '已跳过');
+  else if (!Number.isFinite(order.completionAt) || order.reason) status = chip('unknown', '时间待定');
+  else if (order.completionAt === snapshotTime) status = chip('ready', '现在可备齐');
+  else status = el('span', 'plan-demand-eta', productionPlanTime(order.completionAt));
+  return [el('strong', null, order.label || order.id), materials, status];
+}
+
 function renderProductionPlan(data) {
   const box = clear($('production-plan-result'));
-  box.appendChild(el('p', null, data.statusLabel));
-  const priorityPolicy = data.priorityPolicy || (data.objective === 'priority-makespan'
-    ? '先优化最高优先级需求的齐套时间，再依次优化后续优先级。'
-    : null);
-  if (priorityPolicy) box.appendChild(el('p', 'dim', priorityPolicy));
-  if (data.completionAt != null) {
-    const completionLabel = data.scope === 'configured-demands' ? '全部需求预计齐套 '
-      : data.scope === 'feasible-demands' ? '参与排产的需求预计齐套 '
-      : data.scope === 'feasible-orders' ? '可行订单预计齐套 ' : '全部订单预计齐套 ';
-    box.appendChild(el('p', null, completionLabel
-      + productionPlanTime(data.completionAt) + '，用时 ' + productionPlanDuration(data.upperBound)));
-  }
-  if (data.lowerBound != null && data.upperBound != null && data.lowerBound !== data.upperBound) {
-    box.appendChild(el('p', 'dim', (data.objective === 'priority-makespan' ? '总工期下界 ' : '工期下界 ')
-      + productionPlanDuration(data.lowerBound)
-      + '，当前方案 ' + productionPlanDuration(data.upperBound)));
-  }
-  if (data.priorityBounds?.length) {
-    box.appendChild(el('h3', null, '分层齐套时间'));
-    box.appendChild(el('p', 'dim', '后续级别的最优时间以更高级别已达到最优为条件。'));
-    box.appendChild(table(['优先级', '优先级约束下界', '方案用时'], data.priorityBounds.map(level => [
-      level.label || '第' + (level.priority + 1) + '级',
-      productionPlanDuration(level.lowerBound),
-      productionPlanDuration(level.upperBound),
-    ])));
-  }
-  box.appendChild(el('p', 'dim', '状态快照 ' + productionPlanTime(data.snapshotTime) + ' · 北京时间'));
-  const notes = [...new Set([...(data.notes || []), ...(data.missingReads || []), ...(data.assumptions || [])])];
-  if (notes.length) {
-    const list = el('ul', 'dim');
-    for (const note of notes) list.appendChild(el('li', null, note));
-    box.appendChild(list);
+  box.appendChild(productionPlanSummary(data));
+  const timeline = data.timeline || [];
+  const recipes = new Map((data.recipes || []).map(recipe => [recipe.productId, recipe]));
+  for (const job of timeline) {
+    if (!recipes.has(job.itemId) && job.inputs?.length && job.quantity > 0) {
+      recipes.set(job.itemId, { output: job.quantity, inputs: job.inputs.map(input => ({
+        id: input.itemId, name: input.name, num: input.quantity,
+      })) });
+    }
   }
   if (data.orders?.length) {
-    box.appendChild(el('h3', null, ['configured-demands', 'feasible-demands'].includes(data.scope) ? '需求齐套时间' : '订单齐套时间'));
-    box.appendChild(table(['目标', '优先级', '需求', '预计齐套', '计算状态'], data.orders.map(order => [
-      order.label || order.id,
-      order.priorityLabel || '同级',
-      (order.requirements || []).map(item => (item.name || item.id) + ' ×' + item.num).join('、'),
-      order.skipped ? '已跳过排产' : order.completionAt == null ? '待确认' : productionPlanTime(order.completionAt),
-      order.reason || order.statusLabel,
-    ])));
+    const rows = data.orders.map((order, index) => planDemandRow(order, index, recipes, data.snapshotTime));
+    box.appendChild(table(['需求来源', '所需物品', '预计备齐'], rows, 'plan-demand-table'));
   }
-  if (data.timeline?.length) {
+  for (const [title, jobs] of [
+    ['建议生产顺序', timeline.filter(job => job.kind !== 'existing')],
+    ['游戏内生产队列', timeline.filter(job => job.kind === 'existing')],
+  ]) {
+    if (!jobs.length) continue;
     const details = el('details');
-    details.appendChild(el('summary', null, '生产顺序，共 ' + data.timeline.length + ' 批'));
-    details.appendChild(table(['设施', '产物', '优先级', '投料', '开始', '完成', '时长依据'], data.timeline.map(job => [
+    details.appendChild(el('summary', null, title + '（' + jobs.length + ' 批）'));
+    details.appendChild(table(['生产设施', '生产物品', '开始时间', '预计完成'], jobs.map(job => [
       job.machineName || job.machineId,
-      (job.productName || job.itemId) + ' ×' + job.quantity,
-      (job.priorityLabel || (job.kind === 'existing' ? '已排队' : '同级'))
-        + (job.inheritedPriority ? ' · 上游继承' : ''),
-      job.kind === 'existing' ? '已投料' : (job.inputs || []).map(item => (item.name || item.itemId) + ' ×' + item.quantity).join('、'),
+      planMaterialList([{ id: job.itemId, name: job.productName, num: job.quantity }], recipes),
       productionPlanTime(job.startAt),
       productionPlanTime(job.finishAt),
-      job.timingLabel || '模型计算',
     ])));
     box.appendChild(details);
   }
@@ -101,15 +140,16 @@ $('production-plan-refresh').onclick = async () => {
   setConsoleValue('productionPlan', 'productionPlanBusy', true);
   clear($('production-plan-result'));
   $('production-plan-refresh').disabled = true;
-  $('production-plan-status').textContent = '读取需求与优先级并计算中…';
+  $('production-plan-status').textContent = '正在生成计划…';
   try {
     const data = await call('/api/world/production-plan');
     if (version !== productionPlanVersion || account !== current || !snapshot.connected || disconnected.has(account) || snapshot.paused) return;
     renderProductionPlan(data);
-    $('production-plan-status').textContent = '本次计算完成';
+    $('production-plan-status').textContent = Number.isFinite(data.snapshotTime)
+      ? '数据更新于 ' + productionPlanTime(data.snapshotTime) + '（北京时间）' : '';
   } catch (error) {
     if (version !== productionPlanVersion || account !== current) return;
-    $('production-plan-status').textContent = '计算失败，可重新读取';
+    $('production-plan-status').textContent = '生成失败，请重试';
     reportError(error);
   } finally {
     if (version === productionPlanVersion) {

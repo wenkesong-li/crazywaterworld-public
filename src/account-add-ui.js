@@ -8,7 +8,7 @@ function accountAddChannel() {
 
 function accountAddChanged(channel, phase, { busy = false, account = null } = {}) {
   if (!accountAddState || !accountAddChannel() || accountAddState.channel !== channel) return;
-  if (!accountAddState.cleaning && (phase !== accountAddState.phase || busy)) accountAddState.feedback = '';
+  if (!accountAddState.cleaning && (phase !== accountAddState.phase || busy !== accountAddState.busy)) accountAddState.feedback = '';
   Object.assign(accountAddState, { phase, busy, account });
   renderAccountAdd();
 }
@@ -37,8 +37,7 @@ function renderAccountAdd() {
   $('account-add-done').disabled = locked;
   $('account-add-dialog').setAttribute('aria-busy', String(locked));
   const feedback = $('account-add-feedback');
-  feedback.textContent = state.cleaning ? '正在结束本次登录并清理临时会话…'
-    : state.busy ? '当前请求正在处理，完成后即可返回或关闭。' : state.feedback;
+  feedback.textContent = state.cleaning ? '正在结束本次登录并清理临时会话…' : state.feedback;
   feedback.className = 'phone-feedback ' + (state.feedback && !locked ? 'bad' : 'dim');
 }
 
@@ -47,6 +46,7 @@ async function leaveAccountAdd(close) {
   if (!dialog.open || !accountAddState) return false;
   const state = accountAddState;
   if (state.busy || state.cleaning) {
+    if (state.busy) state.feedback = '当前请求正在处理，完成后即可返回或关闭。';
     renderAccountAdd();
     return false;
   }

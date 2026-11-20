@@ -343,13 +343,16 @@ try {
   assert.equal((await save(third.id, first.choices[2].id)).status, 400);
   const thirdSaved = await save(third.id, third.choices[2].id);
   assert.equal(thirdSaved.status, 200);
-  await waitForLoop(idOfAccount, 4000000003);
+  const thirdId = thirdSaved.data.account.id;
+  assert.notEqual(thirdId, idOfAccount);
+  assert.equal(thirdSaved.data.account.status.paused, true);
+  await waitForLoop(idOfAccount, 3000000002);
   assert.equal(thirdSaved.data.selectedRole.nickname, '灯塔守望');
   store = loadStore();
-  assert.equal(store.accounts.find(account => account.id === idOfAccount).login.worldId, 4000000003);
-  assert.equal(store.accounts.find(account => account.id === idOfAccount).lastSeen.worldId, 4000000003);
-  assert.equal(store.accounts.find(account => account.id === idOfAccount).label, '灯塔守望', '自动昵称随所选角色变化');
-  assert.equal(store.accounts.find(account => account.id === idOfAccount).automation.autoStart, true);
+  assert.equal(store.accounts.find(account => account.id === thirdId).login.worldId, 4000000003);
+  assert.equal(store.accounts.find(account => account.id === thirdId).lastSeen.worldId, 4000000003);
+  assert.equal(store.accounts.find(account => account.id === thirdId).label, '灯塔守望');
+  assert.equal(store.accounts.find(account => account.id === thirdId).automation.autoStart, false);
   await disconnect(idOfAccount);
   store = loadStore();
 
@@ -372,26 +375,28 @@ try {
   assert.equal(connections.length, beforeReuse);
   assert.equal(reads.at(-1).client, activeClient, '按 douyin 前缀账号找到在线会话');
   assert.equal(activeClient.connected, true);
-  assert.equal(merged.choices[0].matched, true);
+  assert.equal(merged.choices[0].matched, false);
   const mergedSaved = await save(merged.id, merged.choices[0].id);
   assert.equal(mergedSaved.status, 200);
   assert.equal(mergedSaved.data.selectedRole.worldId, 3000000001);
   assert.equal(mergedSaved.data.selectedRole.roleWorldId, 3000000010);
-  assert.equal(activeClient.stopCount, 1);
-  assert.equal(worldStops, 1);
-  assert.equal(session.loop.controller.signal.aborted, true);
-  assert.ok(session.generation > previousGeneration);
-  assert.equal(session.productionSyncRequired, true);
+  assert.equal(activeClient.connected, true);
+  assert.equal(worldStops, 0);
+  assert.equal(session.loop.controller.signal.aborted, false);
+  assert.equal(session.generation, previousGeneration);
   store = loadStore();
   let account = store.accounts.find(row => row.id === idOfAccount);
-  assert.equal(account.login.worldId, 3000000001, '连接保存合服前入口区服');
-  assert.equal(account.lastSeen.worldId, 3000000010, '展示保存合服后的实际区服');
-  assert.equal(account.lastSeen.nickname, '海风船长');
-  assert.equal(account.label, '我的抖音账号', '人工备注保持');
-  assert.equal(account.automation.enabled, false);
-  assert.equal(account.automation.autoStart, false);
-  assert.equal(account.automation.productionSyncRequired, true);
-  assert.match(mergedSaved.data.account.title, /我的抖音账号.*海风船长.*海港10服/);
+  const mergedAccount = store.accounts.find(row => row.id === mergedSaved.data.account.id);
+  assert.equal(mergedAccount.login.worldId, 3000000001);
+  assert.equal(mergedAccount.lastSeen.worldId, 3000000010);
+  assert.equal(mergedAccount.lastSeen.nickname, '海风船长');
+  assert.equal(mergedAccount.automation.paused, true);
+  assert.equal(account.login.worldId, 3000000002);
+  assert.equal(account.login.eworldParams.token, 'merged-role-token');
+  assert.equal(account.label, '我的抖音账号');
+  activeClient.stop();
+  session.client = session.worldClient = null;
+  session.loop.running = false;
 
   // 暂停状态允许临时查询和更新，保留用户暂停选择。
   session.paused = true;
@@ -552,9 +557,9 @@ try {
     const queue = holdQueue(session);
     let queuedSave;
     try {
-      queuedSave = save(queued.id, queued.choices[2].id);
+      queuedSave = save(queued.id, queued.choices[1].id);
       await queue.wait(queuedSave);
-      assert.equal((await save(queued.id, queued.choices[2].id)).status, 400);
+      assert.equal((await save(queued.id, queued.choices[1].id)).status, 400);
       assert.equal((await request('/roles', { confirm: true, id: queued.id })).status, 400);
       if (action === 'cancel') await request('/cancel', { id: queued.id });
       else controller.expire();
@@ -594,7 +599,7 @@ try {
         session.lineupJob = gate.promise;
       }
       try {
-        saving = save(pending.id, pending.choices[0].id);
+        saving = save(pending.id, pending.choices[1].id);
         await Promise.race([
           entered.promise,
           saving.then(result => { throw new Error(`${stage} 保存未进入等待，HTTP ${result.status}`); }),
@@ -637,6 +642,7 @@ try {
   // 旧电脑抖音采集与扫码共用身份；更新凭证不新增重复账号或丢失备注。
   const legacyCredential = { ...credential('legacy-capture'), source: 'douyin-mitm' };
   assert.equal(accountId(legacyCredential), accountId(credential('legacy-capture')));
+  legacyCredential.login = { ...legacyCredential.login, worldId: 3000000001 };
   const legacyStore = loadStore();
   upsertAccount(legacyStore, legacyCredential, { label: '旧采集备注' });
   saveStore(legacyStore);

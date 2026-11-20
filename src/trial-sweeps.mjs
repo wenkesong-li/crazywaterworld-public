@@ -1,6 +1,6 @@
 // 试炼钻石/广告扫荡：发送前复查费用与权益，无权益时申请后等待。
 import { exactAutomationId } from './automation-policy.mjs';
-import { adWaitMs, takeAdSlot, prepareAd, coolAd, isAdNotFinished, AD_PACED_REASON, AD_NOT_FINISHED_REASON, AD_PAUSED_REASON } from './ad-shop.mjs';
+import { adAccess, takeAdSlot, prepareAd, coolAd, isAdNotFinished, AD_PACED_REASON, AD_NOT_FINISHED_REASON, AD_PAUSED_REASON } from './ad-shop.mjs';
 const rows = (config, key) => config?.tables?.[key]?.data ?? [];
 const valid = n => Number.isSafeInteger(n) && n >= 0;
 const nowOf = client => Math.floor((Date.now() + (client.serverClockOffsetMs || 0)) / 1000);
@@ -13,23 +13,6 @@ function quantity(value) {
   if (typeof value === 'string' && /^\d+$/.test(value)) n = BigInt(value);
   else if (Number.isInteger(value?.low) && Number.isInteger(value?.high)) n = (BigInt(value.high) << 32n) + BigInt(value.low >>> 0);
   return n >= 0n && n <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(n) : null;
-}
-function versionOkay(actual, minimum) {
-  if (!minimum) return true;
-  if (![actual, minimum].every(v => typeof v === 'string' && /^\d+(\.\d+)*$/.test(v))) return false;
-  const a = actual.split('.').map(Number), b = minimum.split('.').map(Number);
-  for (let i = 0; i < Math.max(a.length, b.length); i++) if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
-  return true;
-}
-function adChannelReason(config, player, channel) {
-  const supported = { '1400': '14021170', '1422': '14021167' }, id = String(channel?.clientInfo?.channelId ?? '');
-  const app = supported[id];
-  if (!app || String(channel.clientInfo.appId) !== app || channel.language !== 'zh_CN' ||
-    (player.channelId && String(player.channelId) !== id) || (player.appId && String(player.appId) !== app)) return '未确认当前客户端支持国内免广告扫荡';
-  const cfg = rows(config, 'AdvChannelCfg').find(r => String(r.key) === id);
-  if (cfg?.isOpen !== true || !versionOkay(channel.clientInfo.originVersion, cfg.minAppVersion)) return '当前渠道或版本未开放广告功能';
-  const level = rows(config, 'ModuleOpenCfg').find(r => r.moduleId === '广告')?.playerLevel;
-  return Number.isInteger(level) && player.level >= level ? '' : '未满足广告功能开放等级';
 }
 function keyOf(state, mode) { return `trialSweep:${state.worldId}:${state.playerId}:${state.day}:${state.raidId}:${mode}:${mode === 'paid' ? state.buyUsed : state.adUsed}`; }
 function pendingFor(state, records) {
@@ -90,11 +73,12 @@ export async function readTrialSweeps(client, protocol, config, player, settings
       else state.paid.allowed = true;
     } catch (error) { state.paid.reason = error.message; }
     try {
-      const channelReason = adChannelReason(config, player, channel);
-      if (channelReason) throw new Error(channelReason);
-      let skip = vip?.effects?.some(([key,value]) => key === '免广告' && Number(value) > 0);
-      if (!skip) { const charge = await client.request('FirstChargeRequest', {}, 'FirstChargeResponse'); if (!Array.isArray(charge.firstCharge?.record)) throw new Error('免广告权益未确认'); skip = charge.firstCharge.record.length > 0; }
-      state.adWaitMs = skip ? 0 : adWaitMs(settings);
+      const info = channel.clientInfo;
+      if (!info?.appId || !info.channelId || (player.channelId && String(player.channelId) !== String(info.channelId))
+        || (player.appId && String(player.appId) !== String(info.appId))) throw new Error('当前角色与登录客户端的渠道身份未确认');
+      const access = await adAccess(client, config.tables, { player, clientInfo: info, language: channel.language, settings });
+      if (access.reason) throw new Error(access.reason);
+      state.adWaitMs = access.waitMs;
       const water = await client.request('OnWaterRequest', {}, 'OnWaterResponse');
       const id = effectIds[raidId], entries = water.adv?.filter(r => r.id === id);
       const limit = rows(config, 'AdvEffectCfg').find(r => r.id === id)?.dailyLimit;
@@ -171,10 +155,10 @@ export async function executeTrialSweep(client, protocol, config, player, raidId
 export async function runExtraTrialSweeps(client, protocol, config, player, { getSettings, ledger, channel, enabled, report } = {}) {
   for (const mode of ['ad','paid']) {
     if (!enabled(mode)) continue;
-    for (const id of getSettings().trials.raidIds) {
+    for (const id of getSettings()?.trials?.raidIds ?? []) {
       if (!enabled(mode)) break;
-      try { report(await executeTrialSweep(client, protocol, config, player, Number(id), mode, { getSettings, ledger, channel, enabled:()=>enabled(mode) })); }
-      catch (error) { report({ title:'试炼'+(mode==='paid'?'钻石':'免广告')+'扫荡', ok:false, error:error.message }); }
+      try { report(await executeTrialSweep(client, protocol, config, player, Number(id), mode, { getSettings, ledger, channel, enabled:()=>enabled(mode) }), Number(id), mode); }
+      catch (error) { report({ title:'试炼'+(mode==='paid'?'钻石':'免广告')+'扫荡', ok:false, error:error.message }, Number(id), mode); }
     }
   }
 }

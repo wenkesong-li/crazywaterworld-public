@@ -134,11 +134,13 @@ await test('请求在途阻止关闭和返回，结束后恢复操作并提示�
   env.changed('phone', 'entry', { busy: true });
   assert.equal(env.node('account-add-close').disabled, true);
   assert.equal(env.node('account-add-back').disabled, true);
-  assert.match(env.node('account-add-feedback').textContent, /请求正在处理/);
+  assert.equal(env.node('account-add-feedback').textContent, '');
   assert.equal(await env.click('close'), false);
+  assert.match(env.node('account-add-feedback').textContent, /请求正在处理/);
   assert.equal(await env.click('back'), false);
   assert.deepEqual(env.cleanup, []);
   env.changed('phone', 'selecting', { busy: false });
+  assert.equal(env.node('account-add-feedback').textContent, '');
   assert.equal(env.node('account-add-close').disabled, false);
   assert.equal(await env.click('close'), true);
 });

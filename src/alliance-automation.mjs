@@ -216,13 +216,16 @@ export async function runAllianceAutomation(client, protocol, config, player, { 
   const original = stamp(player), policy = JSON.stringify(getSettings().alliance), records = [];
   const active = () => enabled() && client.connected !== false && stamp(player) === original && getSettings().alliance.enabled && JSON.stringify(getSettings().alliance) === policy;
   const emit = entry => { records.push(entry); report(entry); };
-  const run = async (label, work) => { try { if (active()) await work(); } catch (error) { emit({ key: 'alliance', label, error: error.message, skipped: error.code === 'ORDER_MATERIAL_SPEND_PENDING' }); } };
+  const run = async (label, work, key = 'alliance') => { try { if (active()) await work(); } catch (error) { emit({ key, label, error: error.message, skipped: error.code === 'ORDER_MATERIAL_SPEND_PENDING' }); } };
   busy.add(client);
   try {
     if (getSettings().alliance.recruit) await run('联盟募兵', () => serviceGuildOrders(client, protocol, config, { player, getSettings, ledger,
       dailyLimit: getSettings().alliance.recruitDailyLimit, enabled: () => active() && getSettings().alliance.recruit, report: emit }));
     if (getSettings().alliance.mutual) await run('联盟互助', () => runMutual(client, protocol, config, player, { getSettings, ledger, enabled: () => active() && getSettings().alliance.mutual, report: emit }));
-    if (getSettings().alliance.collectGifts) await run('联盟福利礼包', async () => emit(await claimGuildWelfare(client, config, { player, enabled: () => active() && getSettings().alliance.collectGifts })));
+    if (getSettings().alliance.collectGifts) await run('联盟福利礼包', async () => {
+      const result = await claimGuildWelfare(client, config, { player, enabled: () => active() && getSettings().alliance.collectGifts });
+      emit({ ...result, key: 'guildWelfare' });
+    }, 'guildWelfare');
     if (getSettings().alliance.autoTech) await run('联盟科技自动升级', async () => {
       const p = getSettings().alliance;
       if ((ledger.snapshot().counters.allianceTech ?? 0) >= p.techDailyLimit) return;

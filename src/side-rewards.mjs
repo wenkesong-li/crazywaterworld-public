@@ -3,28 +3,14 @@ import { claimOnce } from './extra-free-rewards.mjs';
 import { exactAutomationId } from './automation-policy.mjs';
 import { gameplayOpenDay, worldOpenDays } from './extra-rewards.mjs';
 import { checkedAction, clock, dayOf, hasReward, moduleOpen, positive, read, table, waiting } from './activity-actions.mjs';
+import { tournamentRunning } from './tournament-state.mjs';
+export { rememberTournament } from './tournament-state.mjs';
 
 const RECHECK_SECONDS = 1800;
 const nextDayStart = (time) => (dayOf(time) + 1) * 86400 - 28800;
 
 const TOURNAMENT_TASK = 'tournamentDailyGift';
 const TOURNAMENT_LABEL = '擂台赛每日礼包';
-// TournamentStage：1 预选，2-6 正赛，7 公示，8 结束。礼包入口只在预选之后、结束之前可见。
-const STAGE_PRELIMINARY = 1;
-const STAGE_END = 8;
-const tournamentRunning = (state) => state?.stageId > STAGE_PRELIMINARY && state.stageId < STAGE_END;
-
-// 擂台赛状态只在登录和阶段变化时推送，没有读取请求，需要记在连接上。
-export function rememberTournament(client, name, body) {
-  if (name === 'SCTournamentOpen') {
-    client.tournament = {
-      stageId: body?.state?.currentStageId ?? 0,
-      lastClaimDailyGiftTime: body?.lastClaimDailyGiftTime ?? 0
-    };
-  } else if (name === 'SCTournamentUpdate' && client.tournament && body?.state) {
-    client.tournament.stageId = body.state.currentStageId ?? client.tournament.stageId;
-  }
-}
 
 export async function claimTournamentDaily(client, config, { player, enabled, ledger, report, scheduler }) {
   const now = clock(client);

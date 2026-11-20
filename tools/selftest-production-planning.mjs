@@ -57,6 +57,10 @@ test('共享库存只分配一次，现有队列按服务器时间贡献', () =>
   const result = plan();
   assert.equal(result.status, 'optimal');
   assert.equal(result.completionAt, 1020);
+  assert.deepEqual(result.recipes.map(recipe => [recipe.productId, recipe.output, recipe.inputs]), [
+    ['面包', 1, [{ id: '小麦', num: 1, name: '小麦' }]],
+    ['小麦', 5, [{ id: '小麦种子', num: 1, name: '小麦种子' }]],
+  ]);
   assert.deepEqual(result.orders.map(order => order.completionAt).sort(), [1000, 1020]);
   assert.equal(result.timeline.filter(job => job.kind === 'production').length, 0);
 });
@@ -148,7 +152,7 @@ test('联盟刷新边界作为重新核验条件，越界方案保留待确认',
   assert.equal(result.objectiveLowerBound, null);
   assert.equal(result.objectiveUpperBound, null);
   assert.ok(result.priorityBounds.every(bound => bound.lowerBound === null && bound.upperBound === null));
-  assert.match(result.orders[0].reason, /刷新边界/);
+  assert.match(result.orders[0].reason, /备齐前订单会刷新/);
 });
 
 test('月卡位到期后现有排队任务转入常驻位，已启动任务保留服务器时刻', () => {

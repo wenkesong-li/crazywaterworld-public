@@ -80,6 +80,22 @@ function advanceFixture() {
 }
 
 try {
+  await test('挂机备料只统计已开启的海兽动作和有海兽值守的建筑', () => {
+    const { config, settings, snapshot } = advanceFixture();
+    const sources = () => planBaseAutomation(snapshot, config, settings).demands.map(row => row.source).filter(id => id.startsWith('pet')).sort();
+    assert.deepEqual(sources(), ['petAdvance', 'petFeed']);
+    settings.pet.advance = false;
+    assert.deepEqual(sources(), ['petFeed']);
+    settings.pet.feed = false;
+    settings.pet.advance = true;
+    assert.deepEqual(sources(), ['petAdvance']);
+    settings.pet.enabled = false;
+    assert.deepEqual(sources(), []);
+    settings.pet.enabled = true;
+    snapshot.world.buildings.at(-1).petServe.petUid = null;
+    assert.deepEqual(sources(), []);
+  });
+
   await test('同一批库存按海兽进阶、培育投喂和博物馆优先级使用，能反转也能关闭', () => {
     const { config, settings, snapshot } = advanceFixture();
     const plan = () => planBaseAutomation(snapshot, config, settings);
@@ -354,6 +370,44 @@ try {
     assert.equal(result.observation, null);
     assert.equal(result.nextCheck, null);
   });
+
+  for (const scenario of [
+    { name: '到港收货', level: 20, ships: [{ index: 1, status: 2 }], state: 'ok', text: /1 号船已收货/, calls: ['CargoShipsRequest', 'DrawShipRewardRequest'] },
+    { name: '货船运输中', level: 20, ships: [{ index: 1, status: 1 }], state: 'waiting', text: /暂无可交付或领取的货物/, calls: ['CargoShipsRequest'] },
+    { name: '未达开放等级', level: 19, state: 'waiting', text: /20 级/, calls: [] },
+    { name: '角色等级未知', state: 'waiting', text: /等级尚未同步/, calls: [] },
+  ]) {
+    await test('贸易港挂机状态：' + scenario.name, async () => {
+      const settings = defaultSettings();
+      settings.loop.world = settings.cargo.enabled = true;
+      const client = new EventEmitter();
+      client.setMaxListeners(100);
+      client.connected = true;
+      const calls = [], steps = [];
+      const replies = {
+        OnWaterRequest: { building: [], workerOrder: [] }, AllItemRequest: { items: [] },
+        CargoShipsRequest: { ship: scenario.ships }, DrawShipRewardRequest: { reward: { asset: [] } },
+      };
+      client.request = async name => {
+        calls.push(name);
+        assert(Object.hasOwn(replies, name), '意外请求 ' + name);
+        return replies[name];
+      };
+      const protocol = createDeclaredProtocol(Object.keys(replies).flatMap(name => [name, name.replace(/Request$/, 'Response')]));
+      await runLoop(client, protocol, {
+        rounds: 1, allowMutate: true, config: { tables: { CargoUnlockCfg: { data: [{ playerLevel: 20 }] } } },
+        player: { level: scenario.level }, isEnabled: key => key === 'cargo', getSettings: () => settings,
+        onStep: step => steps.push(step),
+      });
+      assert.deepEqual(calls.filter(name => !['OnWaterRequest', 'AllItemRequest'].includes(name)), scenario.calls);
+      const rewards = rewardSchedule(client);
+      const status = rewards.status('cargo');
+      assert.equal(status?.state, scenario.state);
+      assert.match(status.text, scenario.text);
+      assert(rewards.nextCheck('cargo') > rewards.now());
+      if (scenario.state === 'ok') assert(steps.some(step => step.taskKey === 'cargo' && step.ok));
+    });
+  }
 
   await test('挂机正常入口使用隔离状态并保留本轮汇总提示', async () => {
     const f = fixture();

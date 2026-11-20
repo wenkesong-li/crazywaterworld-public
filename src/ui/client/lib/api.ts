@@ -43,13 +43,13 @@ export class ApiError extends Error {
   }
 }
 
-export function createAccountApi(
+export function createAccountRequest(
   accountId: string,
   transport: typeof fetch = fetch,
 ) {
   if (!accountId) throw new Error("请先选择账号");
-  const url = `/api/login-settings?account=${encodeURIComponent(accountId)}`;
-  async function request(options: RequestInit) {
+  return async (path: string, options: RequestInit): Promise<unknown> => {
+    const url = `${path}?account=${encodeURIComponent(accountId)}`;
     // An account is captured when this client is created. Never fall back to
     // the server's active account or retry a write whose result is unknown.
     const writable = !["GET", "HEAD"].includes(
@@ -98,8 +98,17 @@ export function createAccountApi(
         fields,
       );
     }
-    return parseLoginSettings(payload);
-  }
+    return payload;
+  };
+}
+
+export function createAccountApi(
+  accountId: string,
+  transport: typeof fetch = fetch,
+) {
+  const scoped = createAccountRequest(accountId, transport);
+  const request = (options: RequestInit) =>
+    scoped("/api/login-settings", options).then(parseLoginSettings);
   return {
     load: (signal: AbortSignal) => request({ signal }),
     save: (settings: LoginSettings, revision: number) =>

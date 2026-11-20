@@ -70,7 +70,7 @@ try {
     assert.deepEqual(configGroups.filter(group => group.category === 'equipment').map(group => group.id), ['forge']);
     const before = defaultSettings();
     before.forge.buildingIds = ['1装备厂']; before.forge.recipeIds = ['1001'];
-    before.forge.dailyLimit = 7;
+    before.forge.universalReserve = 7;
     const after = setAutomationControl(before, 'forge.enabled', true);
     const expected = structuredClone(before); expected.forge.enabled = true;
     assert.deepEqual(after, expected, '锻造总开关启用时保留工厂、配方和预算');

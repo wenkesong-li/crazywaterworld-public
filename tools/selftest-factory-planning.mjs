@@ -1,7 +1,8 @@
 // Issue #32: production switches, shortest jobs, and bounded material planning.
 import assert from 'node:assert/strict';
 import { defaultSettings } from '../src/automation-settings.mjs';
-import { planWorld, surveyWorld } from '../src/world.mjs';
+import { baseDemands } from '../src/base-automation.mjs';
+import { planWorld, runWorld, surveyWorld } from '../src/world.mjs';
 
 let passed = 0;
 const test = (name, work) => { work(); passed++; console.log('通过：' + name); };
@@ -32,6 +33,78 @@ function fixture() {
   return { config, settings, stock, factory, survey, plan };
 }
 const products = plan => plan.actions.filter(step => step.request === 'StartFactoryProduceRequest').map(step => step.body.productId);
+
+test('低优先级工厂保留海兽已齐的整批进阶材料，优先级反转后正常生产', () => {
+  const f = fixture();
+  Object.assign(f.settings.factory, { demandFirst: true, demandPriority: ['petAdvance', 'cargo'] });
+  f.settings.pet.enabled = f.settings.pet.advance = true;
+  f.stock.set('木材', 6);
+  f.survey.cargoOrder.set('长时品', 3);
+  f.survey.buildings.push({ buildingId: '1民居', type: '民居', level: 1, product: [],
+    petServe: { petUid: '101', upgradeRequirements: [{ id: '木材', num: 3 }, { id: '木材', num: 2 }] } });
+  f.config.tables.PetAdvancedCfg = table([{ grade: 1, level: 5 }]);
+  f.config.tables.PetFeedAttrCfg = table([{ level: 0, attrCounts: [1] }]);
+  const pet = { uid: '101', grade: 0, profFeed: [] };
+  const plan = () => planWorld(f.survey, { config: f.config, settings: f.settings, enabled: kind => kind === 'startProduce',
+    extraDemand: baseDemands({ world: f.survey, now: f.survey.serverNow, pets: [pet] }, f.config, f.settings) });
+  assert.deepEqual(products(plan()), ['长时品']);
+  f.settings.factory.demandPriority.reverse();
+  assert.equal(products(plan()).length, 3);
+  f.settings.factory.demandPriority.reverse();
+  pet.profFeed = [{ attrFeed: [{ times: 1 }] }];
+  assert(!plan().demands.some(row => row.sources.includes('petAdvance')));
+  assert.equal(products(plan()).length, 6, '投喂已满后不再为旧需求保留木材');
+});
+
+test('工厂加速跳过等待格，按服务器时钟计算零号位，只加速已选来源的在产缺口', () => {
+  const f = fixture();
+  Object.assign(f.settings.factory, { speedUpSources: ['petAdvance'], demandPriority: ['petAdvance', 'cargo'] });
+  f.settings.pet.enabled = f.settings.pet.advance = true;
+  f.stock.set('加速器', 10);
+  f.settings.resources.keepAccelerators = 2;
+  f.survey.serverNow = 200;
+  f.factory.buildFinishTime = 900;
+  f.factory.factory.factoryQ = [{ idx: 1, productId: '长时品' }, { idx: 4, productId: '短时品', finishTime: 199 },
+    { productId: '长时品', finishTime: 260 }, { idx: 2, productId: '长时品', finishTime: 350 }];
+  f.survey.cargoOrder.set('长时品', 5);
+  const speed = () => planWorld(f.survey, { config: f.config, settings: f.settings, allowSpeedUp: true,
+    extraDemand: [{ source: 'petAdvance', requirements: [{ id: '长时品', num: 1 }] }] }).actions
+    .filter(step => step.kind === 'speedUpProduce').map(step => [step.body.index, step.body.speedUp.useNum]);
+  assert.deepEqual(speed(), [[0, 1]]);
+  f.factory.factory.factoryQ[1].productId = '长时品';
+  assert.deepEqual(speed(), [], '已到完工时间的同种产品能覆盖缺口');
+  f.factory.factory.factoryQ[1].productId = '短时品';
+  f.factory.factory.finishedProducts.push({ id: '长时品', num: 1 });
+  assert.deepEqual(speed(), [], '待收成品已填满海兽的缺口');
+  f.settings.factory.speedUp = true;
+  f.stock.set('加速器', 4);
+  assert.deepEqual(speed(), [[0, 1], [2, 1]], '独立物品加速仍可使用保留量以上的两个加速器');
+});
+
+{
+  const f = fixture();
+  const finishTime = Math.floor(Date.now() / 1000) + 55;
+  const job = { productId: '长时品', finishTime };
+  f.factory.factory.factoryQ = [job];
+  f.survey.now = f.survey.serverNow = finishTime - 300;
+  f.stock.set('加速器', 10);
+  f.settings.factory.speedUp = true;
+  f.settings.factory.speedUpItems = ['长时品'];
+  const plan = planWorld(f.survey, { config: f.config, settings: f.settings, allowSpeedUp: true, enabled: kind => kind === 'speedUpProduce' });
+  assert.equal(plan.actions[0].body.speedUp.useNum, 5);
+  const writes = [];
+  const client = { request: async () => ({ building: [f.factory] }), sendWatch: async (name, body) => { writes.push(body); } };
+  const run = () => runWorld(client, { SpeedUpFactoryProduceRequest: true }, plan, { allowMutate: true, settings: f.settings,
+    beforeStep: async step => assert.equal(step.costs[0].num, 1), config: f.config });
+  job.productId = '短时品';
+  assert.equal((await run()).results[0].skipped, true);
+  assert.equal(writes.length, 0);
+  job.productId = '长时品';
+  assert.equal((await run()).results[0].step.body.speedUp.useNum, 1);
+  assert.deepEqual(writes, [{ buildingId: f.factory.buildingId, index: 0, speedUp: { type: 2, useNum: 1 } }]);
+  passed++;
+  console.log('通过：执行前跳过已换产品的生产格，并按当前剩余时间核减实际花费');
+}
 
 const shortestFirst = ['短时品', '短时品', '长时品'];
 const parallelOrder = ['短时品', '长时品', '短时品'];

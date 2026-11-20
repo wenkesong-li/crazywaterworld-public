@@ -1,9 +1,11 @@
 // 截图对照新增模块：默认只提供配置，不替用户开启资源消费。
-export const siliconFleetDefaults = id => ({ id, enabled: false, tier: 'ORANGE', emptyOnly: false,
+export const siliconTierLabels = { BLUE: '初等', PURPLE: '中等', ORANGE: '高等' };
+export const siliconFleetDefaults = id => ({ id, enabled: false, tiers: ['ORANGE'], emptyOnly: false,
   opponentOrder: 'powerDesc', maxPowerRatio: 100, failureLimit: 1, dailyAttackLimit: 30,
   pursuit: false, huntEnabled: false, huntPlayers: [], huntRetreat: 'never',
-  safePlayers: [], safeGuilds: [], autoRepair: false, repairSpeedUp: false,
-  marchSpeedUp: false, marchTargetSeconds: 60, minDurabilityPercent: 1 });
+  safePlayers: [], safeGuilds: [], autoRepair: false,
+  marchSpeedUp: false, marchTargetSeconds: 60, marchDailyDiamonds: 0,
+  returnSpeedUp: false, returnTargetSeconds: 60, returnDailyDiamonds: 0, minDurabilityPercent: 1 });
 export const EXTENDED_DEFAULTS = {
   alliance: { enabled: false, recruit: false, recruitDailyLimit: 0, recruitProduction: false,
     mutual: false, mutualMode: 'custom', autoHelp: false, autoAsk: false, allowedMaterials: [], blockedMaterials: [],
@@ -14,7 +16,7 @@ export const EXTENDED_DEFAULTS = {
     disabledMaterials: [], mode: 'redFirst', produceMissing: false, redStartEnabled: false, redStartTime: '20:00' },
   guildFort: { enabled: false, materials: [], reserve: 0, dailyLimit: 0 },
   silicon: { enabled: false, dailyRewardLimit: 0, windows: [],
-    dailyDiamondLimit: 0, pursuitMinutes: 10, fleets: [1, 2, 3].map(id => siliconFleetDefaults(id + '远征船')) },
+    pursuitMinutes: 10, fleets: [1, 2, 3].map(id => siliconFleetDefaults(id + '远征船')) },
   heroRaid: { enabled: false, challenge: false, retryTimes: 10, orders: false, lottery: false, rewards: false },
 };
 const int = (max = 1000000000, min = 0) => ({ kind: 'number', min, max });
@@ -31,11 +33,12 @@ export const EXTENDED_CONSTRAINTS = {
   'guildShip.mode': choice('redFirst', 'mediumLarge', 'full', 'small', 'mediumSmall'),
   'guildShip.redStartTime': { kind: 'time' }, 'guildFort.materials': list(), 'guildFort.reserve': int(), 'guildFort.dailyLimit': int(),
   'silicon.dailyRewardLimit': int(10000), 'silicon.windows': list(10),
-  'silicon.dailyDiamondLimit': int(100000), 'silicon.pursuitMinutes': int(15),
+  'silicon.pursuitMinutes': int(15),
   'silicon.fleets': { kind: 'siliconFleets' },
 };
 export const SILICON_FLEET_NUMBERS = { maxPowerRatio: int(1000, 1), failureLimit: int(100, 1),
-  dailyAttackLimit: int(1000), marchTargetSeconds: int(7200), minDurabilityPercent: int(100, 1) };
+  dailyAttackLimit: int(1000), marchTargetSeconds: int(7200), returnTargetSeconds: int(7200),
+  marchDailyDiamonds: int(100000), returnDailyDiamonds: int(100000), minDurabilityPercent: int(100, 1) };
 export function validateSiliconFleets(value, errors, catalog) {
   if (!Array.isArray(value) || value.length !== 3) { errors['silicon.fleets'] = '请保留三支独立舰队配置'; return null; }
   const output = [], ids = new Set();
@@ -49,7 +52,8 @@ export function validateSiliconFleets(value, errors, catalog) {
     ids.add(row.id);
     for (const [key, initial] of Object.entries(defaults)) if (typeof initial === 'boolean' && typeof row[key] !== 'boolean') errors[prefix + '.' + key] = '开关值必须为 true 或 false';
     for (const [key, rule] of Object.entries(SILICON_FLEET_NUMBERS)) if (!Number.isSafeInteger(row[key]) || row[key] < rule.min || row[key] > rule.max) errors[prefix + '.' + key] = `请输入 ${rule.min}–${rule.max} 之间的整数`;
-    if (!['BLUE', 'PURPLE', 'ORANGE'].includes(row.tier)) errors[prefix + '.tier'] = '请选择初等、中等或高等硅矿';
+    if (!Array.isArray(row.tiers) || row.tiers.some(tier => typeof tier !== 'string' || !Object.hasOwn(siliconTierLabels, tier))
+      || new Set(row.tiers).size !== row.tiers.length) errors[prefix + '.tiers'] = '请选择不重复的硅矿等级';
     if (!['powerAsc', 'powerDesc'].includes(row.opponentOrder)) errors[prefix + '.opponentOrder'] = '请选择有效战力顺序';
     if (!['never', 'afterReward', 'onTarget'].includes(row.huntRetreat)) errors[prefix + '.huntRetreat'] = '请选择有效的追杀撤退策略';
     for (const key of ['safePlayers', 'safeGuilds', 'huntPlayers']) if (!Array.isArray(row[key]) || row[key].length > 100 || new Set(row[key]).size !== row[key].length || row[key].some(v => typeof v !== 'string' || !v.trim() || v !== v.trim() || v.length > 80 || /[\r\n\u0000-\u001f]/.test(v))) errors[prefix + '.' + key] = '请输入不重复的完整名称，每行一个';

@@ -73,7 +73,7 @@ function renderAlipayRoles() {
     if (choice.roleWorldId && String(choice.roleWorldId) !== String(choice.worldId)) {
       info.appendChild(el('p', 'dim', '原区服 ' + (choice.worldName || choice.worldId) + '，合服后位于 ' + alipayRoleWorld(choice)));
     }
-    if (choice.matched) info.appendChild(el('p', 'dim', '此账号已有保存记录，再次保存会更新所选角色和区服。'));
+    if (choice.matched) info.appendChild(el('p', 'dim', '本角色已添加，再次保存会刷新角色资料和登录凭据。'));
     row.append(input, info);
     list.appendChild(row);
   }
@@ -95,7 +95,9 @@ function renderAlipayLogin() {
     cancelled: '已取消本次登录。',
     saved: '账号已保存并切换，尚未开始挂机。可先在「挂机配置」设置任务，再点击账号卡片或页头的「开始挂机」。',
   };
-  if (state.account?.status?.paused || state.account?.status?.loginBlocked) {
+  if (state.account?.hasSiblingRoles && state.account.status?.paused) {
+    messages.saved = '角色已添加。配置好本角色的任务后，点击「切换并托管」即可从同账号的其他角色接手。';
+  } else if (state.account?.status?.paused || state.account?.status?.loginBlocked) {
     messages.saved = '账号已保存并切换。点击页面顶部的「恢复托管」，连接后核对角色和区服。';
   } else if (state.account?.status?.looping) {
     messages.saved = '账号已保存并切换，已按保存配置启动自动挂机。可前往「挂机配置」调整任务。';

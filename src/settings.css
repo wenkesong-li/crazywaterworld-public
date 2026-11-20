@@ -136,7 +136,8 @@
 @media (max-width:768px) {
   .config-tabs { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)) max-content; width:100%; overflow:visible }
   .config-tabs>button { min-width:0; padding-inline:3px }
-  .config-toolbar { flex-wrap:nowrap }
+  .config-toolbar { flex-wrap:wrap }
+  .config-actions { max-width:100%; flex-wrap:wrap }
   .config-owner { flex:1 }
   .config-owner strong { font-size:14px }
   .config-families { padding-inline:16px }
@@ -177,3 +178,21 @@
 @media (pointer:coarse) {
   .config-row { min-height:52px }
 }
+
+#config-history-dialog { width:min(660px,calc(100% - 24px)); max-height:85dvh; padding:20px; overflow:auto; border:1px solid var(--border); border-radius:14px; color:var(--foreground); background:var(--background) }
+#config-history-title { font-size:18px; font-weight:700 }
+#config-history-status { margin:6px 0 12px; color:var(--muted-foreground); overflow-wrap:anywhere }
+#config-history-body,.history-differences { display:grid; gap:8px }
+.history-record,.history-change { padding:10px; border:1px solid var(--border); border-radius:8px; overflow-wrap:anywhere }
+.history-record { display:flex; align-items:center; justify-content:space-between; gap:8px }
+.history-record small,.history-change p { display:block; margin-top:4px; color:var(--muted-foreground) }
+.history-name { display:grid; gap:6px }
+.history-name input { padding:8px; border:1px solid var(--border); border-radius:6px }
+#config-history-actions { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; margin-top:14px }
+.history-action { min-height:36px; padding:6px 10px; border:1px solid var(--border); border-radius:7px }
+.history-action.primary { background:var(--primary); color:var(--primary-foreground) }
+.history-record .history-action { flex:none }
+#config-history-dialog[aria-busy=true] .history-action { opacity:.55; cursor:wait }
+@media (max-width:768px) { .history-action { min-height:44px } }
+.history-full { padding:8px 10px; border:1px solid var(--border); border-radius:8px }
+.history-full pre { max-height:36dvh; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; margin-top:8px; font-size:12px }

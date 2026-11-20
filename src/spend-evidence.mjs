@@ -24,14 +24,9 @@ const jobKey = job => JSON.stringify([job.idx, job.petId, job.startTime]);
 const factoryQueue = building => {
   const jobs = building?.factory?.factoryQ;
   if (!Array.isArray(jobs) || !jobs.every(row => typeof row?.productId === 'string' && row.productId)) return null;
-  // The server omits finishTime for queued slots that are not the currently
-  // active job. Those rows are still valid evidence when they carry a stable
-  // idx. An unkeyed row without finishTime remains invalid because it cannot
-  // be distinguished from the pre-action queue.
-  const keyed = jobs.filter(row => Number.isSafeInteger(row.idx) && row.idx >= 0);
-  if (!unique(keyed, row => row.idx)) return null;
-  if (jobs.some(row => row.finishTime == null && !(Number.isSafeInteger(row.idx) && row.idx >= 0))) return null;
-  if (jobs.some(row => row.finishTime != null && (!integer(row.finishTime) || row.finishTime <= 0))) return null;
+  // idx defaults to zero. Waiting slots may omit their timer or report zero.
+  if (!unique(jobs, row => integer(row.idx ?? 0) ? row.idx ?? 0 : null)) return null;
+  if (jobs.some(row => !integer(row.finishTime ?? 0))) return null;
   return jobs;
 };
 const cargoAsset = asset => typeof asset?.id === 'string' && asset.id && integer(asset.num) && asset.num > 0;
@@ -226,8 +221,22 @@ export async function captureSpendOperation(client, step, { waterSnapshot } = {}
     if (request === 'SpeedUpUpgradeBuildingRequest') return integer(old?.buildFinishTime) && integer(current?.buildFinishTime)
       && current.buildFinishTime > 0 && current.buildFinishTime < old.buildFinishTime && current.level === old.level;
     if (request === 'SpeedUpFactoryProduceRequest') {
-      const job = factoryQueue(old)?.find(row => (row.idx ?? 0) === body.index), changed = factoryQueue(current)?.find(row => (row.idx ?? 0) === body.index);
-      return !!job && job.productId === changed?.productId && changed.finishTime < job.finishTime;
+      const queue = factoryQueue(old), afterQueue = factoryQueue(current);
+      const job = queue?.find(row => (row.idx ?? 0) === (body.index ?? 0));
+      if (!job?.finishTime || !afterQueue) return false;
+      const changed = afterQueue.find(row => (row.idx ?? 0) === (body.index ?? 0));
+      if (changed?.productId === job.productId) return changed.finishTime > 0 && changed.finishTime < job.finishTime;
+      // Full acceleration can move this job directly to finishedProducts. A
+      // natural completion or another slot's product must not settle the spend.
+      const serverNow = (Date.now() + (next.serverClockOffsetMs || 0)) / 1000;
+      if (serverNow >= job.finishTime) return false;
+      const beforeStock = factoryProductionSnapshot(before, body.buildingId);
+      const afterStock = factoryProductionSnapshot(after, body.buildingId);
+      if (!beforeStock || !afterStock) return false;
+      const finished = state => state.building.factory.finishedProducts.find(item => item.id === job.productId)?.num ?? 0;
+      const otherFinished = queue.filter(row => row !== job && row.productId === job.productId
+        && !afterQueue.some(active => (active.idx ?? 0) === (row.idx ?? 0) && active.productId === row.productId)).length;
+      return finished(afterStock) - finished(beforeStock) > otherFinished;
     }
     if (request === 'FarmSpeedUpRequest') return !!old?.farm?.productId && current?.farm?.productId === old.farm.productId
       && current.farm.plantTime === old.farm.plantTime && integer(current.farm.ripeTime) && current.farm.ripeTime < old.farm.ripeTime;

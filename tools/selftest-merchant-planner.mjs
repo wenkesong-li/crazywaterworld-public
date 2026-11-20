@@ -432,6 +432,24 @@ test('活动临近结束禁止新采购，同时仍可本港获利出售', () =>
   assert.equal(f.plan().mode, 'FINAL_LIQUIDATION');
 });
 
+test('清仓按盈利批次累计选港，现金净收益与累计利润可不同', () => {
+  const f = fixture();
+  Object.assign(f.settings, { liquidationMinutes: 180, maxLossPercent: 10 });
+  f.event.endTime = f.now + 9000;
+  f.state.player.goods = [f.batch({ num: 1 }), f.batch({ pid: 2, goodsId: 2, buyPrice: 200, num: 1 })];
+  f.radar.radar = [{ cityId: 20, specGoodsId: 3 }, { cityId: 30, specGoodsId: 2 }];
+  f.markets = [f.history(30, 85)];
+  for (const threshold of [1, 30]) {
+    f.settings.minExpectedProfit = threshold;
+    const plan = f.plan();
+    assert.equal(plan.destination, 20);
+    assert.equal(plan.expectedScore, 42);
+    assert.equal(plan.expectedProfit, 22);
+  }
+  f.settings.maxLossPercent = 0;
+  assert.deepEqual(f.plan().salePids, [1]);
+});
+
 test('期末仅显式配置限额内清仓，亏损不乘利润加成', () => {
   const f = fixture();
   f.event.endTime = f.now + 120;

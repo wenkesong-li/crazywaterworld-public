@@ -34,9 +34,15 @@ GameClient.prototype.connect = async function (login) {
   assert.ok(index >= 0, '只能连接隔离测试账号');
   logins.push(rows[index].id);
   live.add(this);
-  return { result: 0, playerInfo: { playerId: index + 1, worldId: 9001, level: 5, nickname: rows[index].lastSeen.nickname } };
+  const otherRole = login.worldId === 9002;
+  return { result: 0, playerInfo: { playerId: otherRole ? 3 : index + 1, worldId: otherRole ? 9002 : 9001,
+    level: 5, nickname: otherRole ? '二区船长' : rows[index].lastSeen.nickname } };
 };
 GameClient.prototype.request = async name => {
+  if (name === 'GameWorldListRequest') return { recentWorlds: [
+    { worldId: 9001, roleInfo: { id: 1, worldId: 9001, nickname: '海风船长' } },
+    { worldId: 9002, roleInfo: { id: 3, worldId: 9002, nickname: '二区船长' } },
+  ] };
   if (name === 'EmailBoxRequest') { mailReads++; return { email: [] }; }
   return name === 'OnWaterRequest' ? { building: [] } : name === 'AllItemRequest' ? { items: [] } : {};
 };
@@ -179,6 +185,33 @@ try {
     await page.locator('#tabs [data-tab="account"]').click();
     await first.filter({ hasText: '开始挂机' }).waitFor();
     assert.equal(app.sessions.get('first').loop.running, false, '刷新不重启已暂停的挂机');
+    if (width === 320) {
+      const oldClient = app.sessions.get('first').client;
+      await cards.nth(0).locator('[data-account-action="details"]').click();
+      await page.locator('#load-worlds').click();
+      await page.locator('#worlds').getByRole('button', { name: '添加角色' }).click();
+      await page.locator('#worlds .acct').filter({ hasText: '二区船长' }).getByRole('button', { name: '已添加' }).waitFor();
+      await page.locator('#account-info-close').click();
+      const nextRole = cards.filter({ hasText: '二区船长' });
+      const switchRole = nextRole.getByRole('button', { name: '切换并托管' });
+      await switchRole.waitFor();
+      assert.equal(oldClient.connected, true);
+      const store = loadStore();
+      assert.equal(store.accounts.find(row => row.id === 'first').login.worldId, 9001, '旧记录固定为原角色');
+      const added = store.accounts.find(row => row.login.worldId === 9002);
+      const endpoint = root + '/api/settings?account=' + encodeURIComponent(added.id);
+      const current = await (await fetch(endpoint)).json();
+      current.settings.schedule.mail = true;
+      assert.equal((await fetch(endpoint, { method: 'POST', body: JSON.stringify({
+        confirm: true, settings: current.settings, revision: current.revision, baseRevision: current.baseRevision,
+      }) })).status, 200);
+      await switchRole.click();
+      await nextRole.getByRole('button', { name: '暂停挂机' }).waitFor();
+      assert.equal(oldClient.connected, false);
+      assert.equal(app.sessions.get('first').paused, true);
+      assert.equal(app.sessions.get('second').client.connected, true, '其他登录账号继续在线');
+      console.log('通过：从旧账号详情添加二区，保留原区并切换托管');
+    }
     console.log('通过：' + width + 'px账号启停、单行按钮、请求锁及当前账号隔离');
     await context.close();
   }

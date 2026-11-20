@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { RESOURCE } from './config.mjs';
 import { toNumber } from './client.mjs';
 import { exactAutomationId, resourceReserve, worldPreferenceEnabled } from './automation-policy.mjs';
@@ -40,6 +41,13 @@ function requirements(value) {
   return [...result].map(([id, num]) => ({ id, num }));
 }
 
+const factoryMaterials = row => ({ productId: row.itemId, costs: requirements(row.costItem), output: 1 });
+const cropMaterials = row => ({ productId: row.id, costs: requirements([row.material]), output: amount(row.produceNum) });
+
+export function configuredMaterialRecipes(config) {
+  return [...rows(config, 'BuildingProduceCfg').map(factoryMaterials), ...rows(config, 'FarmlandPlantCfg').map(cropMaterials)];
+}
+
 /** Build a JSON-safe, fixed set of currently observed production demands. No I/O. */
 export function buildProductionSnapshot(raw, config, settings = {}) {
   const merchantEnabled = activityProductionEnabled(settings, 'merchant');
@@ -66,7 +74,8 @@ export function buildProductionSnapshot(raw, config, settings = {}) {
     level: amount(building?.level), upgradingUntil: timestamp(building?.buildFinishTime),
     buildStartTime: amount(building?.buildStartTime) ?? 0, buildFinishTime: amount(building?.buildFinishTime) ?? 0,
     farm: building?.farm ?? null, factory: building?.factory ?? null,
-    petBreed: building?.petBreed ?? null, petServe: building?.petServe ?? null,
+    petBreed: building?.petBreed ?? null, petServe: building?.petServe
+      ? { ...building.petServe, petUid: exactAutomationId(building.petServe.petUid) } : null,
   }));
   const factories = [], farms = [];
   for (const building of buildings) {
@@ -199,13 +208,12 @@ export function buildProductionSnapshot(raw, config, settings = {}) {
   }
   if (settings.museum && settings.pet && settings.factory) {
     const world = { buildings, factories: buildings.filter(b => b.factory), stockCap, have: id => stockMap.get(id) ?? 0 };
-    const extra = baseDemands({ now: serverNow, player: raw.player, world, museum: raw.museum, radar: raw.radar,
+    const pets = list(raw.pets?.pets).map(pet => ({ ...pet, uid: exactAutomationId(pet.uid) }));
+    const extra = baseDemands({ now: serverNow, player: raw.player, world, pets, museum: raw.museum, radar: raw.radar,
       guildRecruitDemand: [], guildShipDemand: [], heroRaidDemand: [] }, config, settings);
     for (const [index, demand] of extra.entries()) {
       if (!priority.has(demand.source) || ['guildRecruit', 'guildShip', 'heroRaid', 'refugee'].includes(demand.source)) continue;
       if (demand.source !== 'factory' && !settings.loop?.world) continue;
-      if (demand.source === 'petAdvance' && (!settings.pet.enabled || !settings.pet.advance)) continue;
-      if (demand.source === 'petFeed' && (!settings.pet.enabled || !settings.pet.feed)) continue;
       addOrder(demand.source, digest([index, demand.requirements]), demand.requirements, null, {}, demand.source === 'factory' ? 'stockTarget' : 'consumption');
     }
   }
@@ -247,12 +255,12 @@ export function buildProductionSnapshot(raw, config, settings = {}) {
   const recipes = rows(config, 'BuildingProduceCfg').map(recipe => {
     const gate = factoryRecipeAvailability(recipe, raw.festivals, serverNow);
     const available = factories.some(factory => factory.type === recipe.buildType && factory.level >= recipe.unlockLevel && factory.enabled) && gate.allowed;
-    return { id: recipe.itemId, productId: recipe.itemId, facilityType: recipe.buildType,
-      costs: requirements(recipe.costItem), output: 1, durationSeconds: amount(recipe.produceTime), unlockLevel: recipe.unlockLevel,
+    return { id: recipe.itemId, ...factoryMaterials(recipe), facilityType: recipe.buildType,
+      durationSeconds: amount(recipe.produceTime), unlockLevel: recipe.unlockLevel,
       available, reason: available ? null : gate.reason || '所需工厂等级未达到或已禁用', timingSource: 'estimated' };
   });
-  for (const crop of cropRecipes.values()) recipes.push({ id: crop.id, productId: crop.id, facilityType: '农田',
-    costs: requirements([crop.material]), output: amount(crop.produceNum), durationSeconds: amount(crop.time), unlockLevel: 1,
+  for (const crop of cropRecipes.values()) recipes.push({ id: crop.id, ...cropMaterials(crop), facilityType: '农田',
+    durationSeconds: amount(crop.time), unlockLevel: 1,
     available: farms.some(farm => farm.enabled), reason: farms.some(farm => farm.enabled) ? null : '没有可用农田', timingSource: 'estimated' });
   if (recipes.some(recipe => !recipe.costs || !(recipe.output > 0) || !(recipe.durationSeconds > 0))) incomplete('productionRecipes', '部分配方成本、产量或配置耗时无效');
   if (!Array.isArray(raw.effects?.effects)) incomplete('GameEffectRequest', '生产效果未完整返回');
@@ -276,20 +284,35 @@ export function buildProductionSnapshot(raw, config, settings = {}) {
 export async function readProductionSnapshot(client, protocol, config, player, settings = {}, options = {}) {
   if (!exactAutomationId(player?.playerId ?? player?.id) || !exactAutomationId(player?.worldId)) throw new Error('无法确认生产快照的角色或区服身份');
   const initialActor = actor(player), initialSocket = client.socket, initialEpoch = client.connectionEpoch;
-  let changedDuringRead = null;
-  const check = () => {
-    if (changedDuringRead) throw Object.assign(new Error('读取生产快照期间游戏状态已变化（' + changedDuringRead + '），请重新读取'), { code: 'PRODUCTION_SNAPSHOT_CHANGED' });
+  const checkContext = () => {
     if (client.connected === false || client.socket !== initialSocket || client.connectionEpoch !== initialEpoch
       || actor(player) !== initialActor || options.enabled?.() === false) {
-      throw Object.assign(new Error('读取生产快照期间账号或连接已变化'), { code: 'PRODUCTION_SNAPSHOT_CHANGED' });
+      throw Object.assign(new Error('账号、连接或排产设置已变化，请重新生成计划'), { code: 'PRODUCTION_SNAPSHOT_CHANGED' });
     }
   };
-  check();
+  for (let attempt = 1; ; attempt++) {
+    checkContext();
+    try {
+      return await readSnapshotOnce(client, protocol, config, player, settings, options, checkContext);
+    } catch (error) {
+      if (error.code !== 'PRODUCTION_SNAPSHOT_CHANGED' || !error.updatePush || attempt >= 3) throw error;
+      await delay(200 * attempt);
+    }
+  }
+}
+
+async function readSnapshotOnce(client, protocol, config, player, settings, options, checkContext) {
+  let updatePush = null, otherRequest = false;
+  const check = () => {
+    checkContext();
+    if (otherRequest) throw Object.assign(new Error('读取期间有其他游戏操作，请稍后重新生成计划'), { code: 'PRODUCTION_SNAPSHOT_CHANGED' });
+    if (updatePush) throw Object.assign(new Error('游戏数据仍在更新，请稍后重新生成计划'), { code: 'PRODUCTION_SNAPSHOT_CHANGED', updatePush });
+  };
   const reads = [], cache = new Map(), raw = { player, reads };
   const allowed = new Set(['OnWaterRequest', 'AllItemRequest', 'AllResourceRequest', 'GameEffectRequest', 'WeekInfoRequest',
     'WeekOrderInfoRequest', 'CargoShipsRequest', 'GuildOrderRequest', 'GuildShipRequest', 'GuildInfoRequest', 'AllHeroRequest',
-    'RadarInfoRequest', 'MuseumInfoRequest', 'MonthCardRequest']);
-  const optional = new Set(['MonthCardRequest', 'AllHeroRequest', 'MuseumInfoRequest', 'GuildInfoRequest', 'GuildShipRequest']);
+    'RadarInfoRequest', 'MuseumInfoRequest', 'MonthCardRequest', 'AllPetRequest']);
+  const optional = new Set(['MonthCardRequest', 'AllHeroRequest', 'MuseumInfoRequest', 'GuildInfoRequest', 'GuildShipRequest', 'AllPetRequest']);
   const request = async (name, body = {}, response = name.replace(/Request$/, 'Response')) => {
     check();
     if (!allowed.has(name)) throw new Error('生产快照不允许此请求 ' + name);
@@ -321,10 +344,10 @@ export async function readProductionSnapshot(client, protocol, config, player, s
     'SCAllActivity', 'SCGameEffectUpdate', 'SCUpdateHero', 'SCVipUpdate', 'SCPlayerExpUpdate', 'SCPlayerLevelGrade',
     'SCJoinGuild', 'SCLeaveGuild', 'SCGuildChanged', 'SCRadarEventState', 'SCRadarUpdate']);
   const observeFrame = ({ dir, name } = {}) => {
-    if (dir === 'out' && !allowed.has(name) && !transport.has(name)) changedDuringRead ??= name || '其他请求';
+    if (dir === 'out' && !allowed.has(name) && !transport.has(name)) otherRequest = true;
   };
   const observeMessage = ({ name } = {}) => {
-    if (changingPushes.has(name) || /^SC(?:HeroRaid|GuildShip)/.test(name ?? '')) changedDuringRead ??= name;
+    if (changingPushes.has(name) || /^SC(?:HeroRaid|GuildShip)/.test(name ?? '')) updatePush ??= name;
   };
   client.on?.('frame', observeFrame);
   client.on?.('message', observeMessage);
@@ -386,6 +409,8 @@ export async function readProductionSnapshot(client, protocol, config, player, s
     }
     else reads.push({ request: 'GuildOrderRequest', status: 'missing', reason: '当前联盟身份未完整确认' });
     const sources = new Set(settings.factory?.demandPriority ?? []);
+    if (sources.has('petAdvance') && activityProductionEnabled(settings, 'petAdvance')
+      && list(raw.water?.building).some(b => b.petServe?.upgradeRequirements?.length && exactAutomationId(b.petServe.petUid))) await get('pets', 'AllPetRequest');
     if (sources.has('museum') && settings.museum?.runEnabled !== false && (settings.museum?.enabled || settings.museum?.upgrade)) await get('museum', 'MuseumInfoRequest');
     if (heroState) raw.heroRaids = { observed: heroState.observed, invalid: heroState.invalid, raids: [...heroState.raids.values()].map(raid => ({ ...raid, order: raid.order && { ...raid.order } })) };
     raw.festivals = Array.isArray(client.festivals) ? client.festivals : null;

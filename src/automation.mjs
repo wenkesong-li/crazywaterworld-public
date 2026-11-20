@@ -68,6 +68,7 @@ export const automationTasks = [
   ['battleReportRewards', '邮件战报一键领取', '领奖', false],
   ['weekSupplyFree', '周活动补给免费礼包', '周期活动', false],
   ['leagueCollect', '积分赛累计收集', '挑战', false],
+  ['leagueChallenge', '积分赛每日挑战', '挑战', false],
   ['leaguePassRewards', '积分赛战令奖励', '挑战', false],
   ['limitedFreeGifts', '商城限购免费礼包', '领奖', false],
   ['vipDailyGift', 'VIP每日免费礼包', '领奖', false],

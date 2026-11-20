@@ -11,6 +11,7 @@ const cases = [
   ['selftest-campaign-report-rewards.mjs'],
   ['selftest-world-boss-fleets.mjs'],
   ['selftest-world-boss-lineups.mjs'],
+  ['selftest-league-challenge.mjs'],
   ['selftest-react-client.mjs'],
   ['selftest-account-backup-http.mjs'],
   ['selftest-account-backup-ui.mjs'],

@@ -40,7 +40,7 @@ export function antiqueSettings() {
   s.resident.rewards = s.dailies.enabled = false;
   Object.assign(s.antique, { enabled: true, activate: true, activateQualities: ['BLUE', 'RED'], star: true,
     starQualities: ['BLUE', 'RED'], targetStar: 0, universal: false, master: true, targetMasterLevel: 0,
-    suit: true, suitQualities: ['BLUE', 'RED'], goldReserve: 0, dailyGoldLimit: 0, maxActions: 20, checkEverySeconds: 60 });
+    suit: true, suitQualities: ['BLUE', 'RED'], maxActions: 20, checkEverySeconds: 60 });
   return s;
 }
 

@@ -59,7 +59,7 @@ function enabledFields(value, prefix = '') {
 }
 function assertEnabledSettings(settings, allowed = []) {
   // 隐藏兼容字段及装备总控下的默认动作不会单独触发自动执行。
-  assert.deepEqual(enabledFields(settings).sort(), ['ads.noPrivilege', 'forge.collect', 'forge.craft', ...allowed].sort());
+  assert.deepEqual(enabledFields(settings).sort(), ['ads.noPrivilege', 'forge.collect', 'forge.craft', 'treasure.outboundSpeedUp', ...allowed].sort());
   assert.equal(settings.forge.enabled, false);
   assert.equal(settings.forge.nativeAuto, false);
 }

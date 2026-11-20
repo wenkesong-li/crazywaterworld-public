@@ -177,6 +177,25 @@ try {
         assert.equal((await api('loop/control', { confirm: true, key: group + '.runEnabled', enabled: false, revision: before.data.revision })).status, 400);
       }
       assert.deepEqual((await api('settings', null, 'module-b')).data.settings, other.data.settings);
+      const snapshot = (await api('settings')).data;
+      const options = snapshot.settings;
+      Object.assign(options.schedule, { worldOnline:true, guildWelfare:true, tradeTasks:true, weekCharge:true, weekSupplyFree:true });
+      Object.assign(options.activityAutomation, { weekCharge:false, weekLottery:false, weekChip:false, weekUnique:false });
+      options.guildFort.enabled = options.guildShip.enabled = options.heroRaid.enabled = options.merchant.enabled = true;
+      assert.equal((await api('settings', {confirm:true,settings:options,revision:snapshot.revision})).status,200);
+      const recorded = {worldOnlineRewards:'等待服务器城战时段',guildWelfare:'联盟暂无新礼包',merchantRewards:'海商王尚未开放',
+        guildFort:'本赛季尚未开放工事',guildShip:'商船未开放',heroRaid:'英雄活动未开放'};
+      app.sessions.get('module-a').loop.controlStatus = new Map(Object.entries(recorded).map(([key,text]) =>
+        [key,{state:'waiting',text,checkedAt:Math.floor(Date.now()/1000)}]));
+      const rows = (await api('loop')).data.controls;
+      const row = key => rows.find(control=>control.key===key);
+      for(const [key,source] of Object.entries({'schedule.worldOnline':'worldOnlineRewards','schedule.guildWelfare':'guildWelfare',
+        'schedule.tradeTasks':'merchantRewards','guildFort.enabled':'guildFort','guildShip.enabled':'guildShip','heroRaid.enabled':'heroRaid'}))
+        assert(row(key).condition.includes(recorded[source]),key);
+      assert(row('schedule.weekCharge').blockedBy.includes('累计充值'));
+      assert.match(row('schedule.weekSupplyFree').condition,/幸运转盘、芯片活动、周翻牌/);
+      assert.equal(row('radar.runEnabled').condition,'范围已开启');
+      assert.equal(row('trials.ads').condition,'已关闭');
       assert(!app.sessions.get('module-a').client);
       const none = settingsFromNative(Object.fromEntries(automationTasks.map(task => [task.key, false])));
       none.radar.enabled = true; none.radar.runEnabled = false;

@@ -191,6 +191,31 @@ try {
     ['PURPLE', 'fallbackMediumRewardPriority', 'fallback'],
     ['BLUE', 'fallbackSmallRewardPriority', 'fallback'],
   ]) {
+    await check(quality + ' 货轮按全部命中或至少命中筛选，发送前复核门槛', async () => {
+      const f = fallbackFixture(), p = f.settings.treasure, target = f.state.targets[0];
+      f.state.targets = [target];
+      target.color = f.protocol.Color[quality];
+      p.fleetIds = ['1远征船'];
+      const prefix = { ORANGE: 'reward', PURPLE: 'fallbackMediumReward', BLUE: 'fallbackSmallReward' }[quality];
+      const matchMode = prefix + 'MatchMode', minHits = prefix + 'MinHits';
+      p[field] = ['精铁', 'GOLD', '徽章经验'];
+      target.reward.asset = [{ id: '精铁', num: 10 }, { id: '精铁', num: 1 }, { id: 'GOLD', num: 2 }];
+      p[matchMode] = 'all';
+      assert.equal((await fallbackPreview(f)).actions.length, 0);
+      target.reward.asset.push({ id: '徽章经验', num: 1 });
+      assert.equal((await fallbackPreview(f)).actions[0]?.mode, mode);
+      target.reward.asset.pop();
+      p[matchMode] = 'multiple';
+      p[minHits] = 3;
+      assert.equal((await fallbackPreview(f)).actions.length, 0);
+      p[minHits] = 2;
+      assert.equal((await fallbackPreview(f)).actions[0]?.mode, mode);
+      f.client.onRequest = name => { if (name === 'WorldInfoRequest') p[minHits] = 3; };
+      await run(f, f.settings);
+      assert.deepEqual(f.client.writes, []);
+      p[field] = [];
+      assert.equal((await fallbackPreview(f)).actions[0]?.mode, mode);
+    });
     await check(quality + ' 货轮多选奖励命中任一项即可派遣，发送前按最新奖励复核', async () => {
       const f = fallbackFixture(), target = f.state.targets[0];
       target.color = f.protocol.Color[quality];

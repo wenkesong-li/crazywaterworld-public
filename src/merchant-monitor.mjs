@@ -15,7 +15,7 @@ export function watchMerchant(client) {
   if (watchers.has(client)) return watchers.get(client);
   const listeners = new Set();
   let nextAt = 0, event = null, cityId = null, market = null, ports = new Set(), dirty = false, revision = 0;
-  let attached = false;
+  let attached = false, destination = null, fleetRevision = 0;
   const notify = reason => {
     for (const listener of listeners) { try { listener({ reason, revision, nextCheckAt: nextAt }); } catch {} }
   };
@@ -27,15 +27,21 @@ export function watchMerchant(client) {
   const onMessage = ({ name, body } = {}) => {
     if (name === 'SCTradeCityGoods') {
       if (positive(cityId) && body?.cityId === cityId) invalidate('本港价格或联盟库存已变化');
+    } else if (name === 'SCTradeCargoMove' && positive(destination)) {
+      const voyage = body?.cargo?.cargo;
+      if (voyage?.moveToCityId === destination || voyage?.cityId === destination) {
+        fleetRevision++;
+        invalidate('目的港商船航程已变化');
+      }
     } else if (name === 'SCTradeCityReport') {
       if (positive(body?.cityId) && (body.cityId === cityId || ports.has(body.cityId))) invalidate('已知港口商情已变化');
     } else if (name === 'SCAllActivity' && eventKey(body?.trade) !== eventKey(event)) {
       event = body?.trade ? { period: body.trade.period, startTime: body.trade.startTime, endTime: body.trade.endTime } : null;
-      cityId = null; market = null; ports.clear();
+      cityId = null; destination = null; market = null; ports.clear();
       invalidate('海商王活动期次或时间已变化');
     }
   };
-  const onClose = () => { event = null; cityId = null; market = null; ports.clear(); invalidate('连接已关闭'); };
+  const onClose = () => { event = null; cityId = null; destination = null; market = null; ports.clear(); invalidate('连接已关闭'); };
   const attach = () => {
     if (attached) return;
     client.on?.('message', onMessage); client.on?.('close', onClose); attached = true;
@@ -52,6 +58,7 @@ export function watchMerchant(client) {
       return () => { listeners.delete(listener); if (!listeners.size) detach(); };
     },
     get nextCheckAt() { return nextAt; },
+    get fleetRevision() { return fleetRevision; },
     due(time = nowOf(client)) { return nextAt <= time; },
     defer(until) {
       if (Number.isFinite(until)) nextAt = Math.max(nowOf(client) + 1, Math.ceil(until));
@@ -60,10 +67,11 @@ export function watchMerchant(client) {
     invalidate,
     observe(input = {}) {
       const time = valid(input.time) ? input.time : nowOf(client);
-      if (eventKey(event) !== eventKey(input.event)) { market = null; ports.clear(); }
+      if (eventKey(event) !== eventKey(input.event)) { market = null; destination = null; ports.clear(); }
       event = input.event ? { period: input.event.period, startTime: input.event.startTime, endTime: input.event.endTime } : null;
       const cargo = input.state?.cargo;
       if (positive(cargo?.cityId)) {
+        destination = cargo.moveEndTime > time ? cargo.moveToCityId : null;
         if (cityId !== cargo.cityId) market = null;
         cityId = cargo.cityId;
       }

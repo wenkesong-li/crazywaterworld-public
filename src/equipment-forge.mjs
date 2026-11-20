@@ -120,22 +120,19 @@ export function releaseStaleEquipmentForge(snapshot, ledger, buildingId) {
   return { status: 'released', key, details: record.details };
 }
 
-export function planEquipmentForge(snapshot, config, settings, { usage = { counters: {} }, keys = {} } = {}) {
+export function planEquipmentForge(snapshot, config, settings, { keys = {} } = {}) {
   const p = settings?.forge;
   const plan = { actions: [], notes: [], factories: [], forgeLevel: snapshot.forgeLevel, gold: snapshot.gold, season: snapshot.season };
   if (!p) return plan;
   const balances = new Map(snapshot.stock);
   for (const [key, record] of Object.entries(keys)) {
     if (p.nativeAuto || !key.startsWith('forge:' + snapshot.worldId + ':') || !ownsRecord(record, snapshot) || record.confirmed) continue;
-    if (!Array.isArray(record.details?.costs)) { plan.notes.push('存在不完整的未决锻造预算，暂不下单'); return plan; }
+    if (!Array.isArray(record.details?.costs)) { plan.notes.push('未决锻造消耗记录不完整，暂不下单'); return plan; }
     for (const cost of record.details.costs) {
       if (!cost?.id || !integer(cost.num)) { plan.notes.push('未决锻造消耗记录异常'); return plan; }
       balances.set(cost.id, (balances.get(cost.id) ?? 0) - cost.num);
     }
   }
-  const used = usage.counters ?? {};
-  let count = used.forgeStarts ?? 0, goldSpent = used.forgeGold ?? 0;
-  if (!p.nativeAuto && (!integer(count) || !integer(goldSpent))) { plan.notes.push('锻造当日用量记录异常'); return plan; }
   if (!p.enabled) plan.notes.push('装备自动锻造未开启');
   if (snapshot.reason) plan.notes.push(snapshot.reason);
   const ownedNative = ownedNativeForgeRecords(snapshot, keys);
@@ -183,7 +180,6 @@ export function planEquipmentForge(snapshot, config, settings, { usage = { count
     }
     if (p.craft === false) reason = '自动续产已关闭';
     else if (record && !record.confirmed) reason = '上次下单结果待确认，暂不重复';
-    if (!reason && count >= p.dailyLimit) reason = '已达今日锻造次数上限';
     if (reason) { view.reason = reason; plan.notes.push(id + '：' + reason); continue; }
     if (!p.enabled || snapshot.reason) continue;
     const failures = [];
@@ -197,19 +193,18 @@ export function planEquipmentForge(snapshot, config, settings, { usage = { count
       const normal = Math.min(material[1], Math.max(0, available)), shortage = material[1] - normal;
       const quality = rows(config, 'ItemCfg').find(row => row.id === material[0])?.quality;
       const universal = universalItems[quality];
-      // 游戏先消耗实际持有的普通材料；不能利用万能材料开关绕过普通材料保留量。
-      if (available - normal < p.materialReserve || (shortage && (!p.universal || !universal || (balances.get(universal) ?? 0) - shortage < p.universalReserve))) {
-        failures.push(recipe.type + '材料不足或会低于保留量'); continue;
+      if (available < 0 || (shortage && (!p.universal || !universal))) { failures.push(recipe.type + '材料不足'); continue; }
+      if (shortage && (balances.get(universal) ?? 0) - shortage < p.universalReserve) {
+        failures.push(recipe.type + '的万能材料不足或会低于保留量'); continue;
       }
-      if ((balances.get('GOLD') ?? 0) - gold[1] < p.goldReserve) { failures.push('金币不足或会低于保留量'); continue; }
-      if (goldSpent + gold[1] > p.dailyGoldLimit) { failures.push('会超过今日锻造金币预算'); continue; }
+      if ((balances.get('GOLD') ?? 0) < gold[1]) { failures.push('金币不足'); continue; }
       const costs = [{ id: 'GOLD', num: gold[1] }, ...(normal ? [{ id: material[0], num: normal }] : []), ...(shortage ? [{ id: universal, num: shortage }] : [])];
       const action = { kind: 'forgeStart', request: 'MakeEquipRequest', body: { buildingId: id, makeId: recipe.makeId, universal: shortage > 0 },
         uniqueKey: keyOf(snapshot, id, keys), buildingId: id, recipeId: recipe.makeId, costs, gold: gold[1],
         beforeFinishTime: making?.finishTime ?? 0, label: id + '锻造' + recipe.type + '（' + displayMaterial(config, material[0]) + '）' };
       plan.actions.push(action); view.reason = '可安排所选配方';
       for (const cost of costs) balances.set(cost.id, (balances.get(cost.id) ?? 0) - cost.num);
-      goldSpent += gold[1]; count++; break;
+      break;
     }
     if (!plan.actions.some(action => action.buildingId === id)) { view.reason = [...new Set(failures)].join('；') || '未选择可用配方'; plan.notes.push(id + '：' + view.reason); }
   }
@@ -236,7 +231,7 @@ function reconcile(snapshot, ledger, onStep, enabled = () => true) {
     let data = record.details;
     if (data?.kind !== 'forgeStart' || !integer(data.makeId, 1) || !integer(data.beforeFinishTime) || !Array.isArray(data.beforeUids)) continue;
     const building = snapshot.buildings.find(row => row.buildingId === data.buildingId), making = building?.equipMaking;
-    // A confirmed start has already spent its budget. Manual speed-ups and new
+    // A confirmed start has already consumed its materials and gold. Manual speed-ups and new
     // batches can change every queue field, so follow the current factory state.
     if (making && (record.confirmed || making.makeId === data.makeId
       && making.finishTime > data.beforeFinishTime && making.finishTime >= data.sentAt)) {
@@ -269,14 +264,14 @@ export async function runEquipmentForge(client, protocol, config, player, { getS
   try {
     const read = () => readEquipmentForge(client, protocol, config, player, { enabled: current });
     const snapshot = await read(); reconcile(snapshot, ledger, report, current);
-    const plan = planEquipmentForge(snapshot, config, getSettings(), { usage: ledger.snapshot(), keys: ledger.keyRecords() });
+    const plan = planEquipmentForge(snapshot, config, getSettings(), { keys: ledger.keyRecords() });
     if (nativeOnly) plan.actions = plan.actions.filter(step => step.kind === 'forgeNative');
     const balances = new Map(snapshot.stock);
     for (const proposed of plan.actions) {
       if (!current() || !forgeEnabled(getSettings())) break;
       const settings = getSettings(), fresh = await read(), actualStock = new Map(fresh.stock);
       for (const [id, amount] of balances) fresh.stock.set(id, Math.min(fresh.stock.get(id) ?? 0, amount));
-      const reviewed = planEquipmentForge(fresh, config, settings, { usage: ledger.snapshot(), keys: ledger.keyRecords() });
+      const reviewed = planEquipmentForge(fresh, config, settings, { keys: ledger.keyRecords() });
       const step = reviewed.actions.find(action => action.uniqueKey === proposed.uniqueKey && action.kind === proposed.kind &&
         (action.kind !== 'forgeClaim' || (action.makeId === proposed.makeId && action.finishTime === proposed.finishTime)) &&
         JSON.stringify(action.body) === JSON.stringify(proposed.body) && JSON.stringify(action.costs) === JSON.stringify(proposed.costs));
@@ -323,7 +318,7 @@ export async function runEquipmentForge(client, protocol, config, player, { getS
         report(entry);
         if (entry.status === 'unknown') break;
         if (entry.status === 'confirmed' && after && current() && settings === getSettings()) {
-          const next = planEquipmentForge(after, config, settings, { usage: ledger.snapshot(), keys: ledger.keyRecords() }).actions.find(row => row.kind === 'forgeStart' && row.buildingId === step.buildingId);
+          const next = planEquipmentForge(after, config, settings, { keys: ledger.keyRecords() }).actions.find(row => row.kind === 'forgeStart' && row.buildingId === step.buildingId);
           if (next) plan.actions.push(next);
         }
         continue;
@@ -331,7 +326,7 @@ export async function runEquipmentForge(client, protocol, config, player, { getS
       const details = { kind: 'forgeStart', buildingId: step.buildingId, makeId: step.recipeId, costs: step.costs,
         playerId: fresh.playerId, worldId: fresh.worldId,
         beforeFinishTime: step.beforeFinishTime, beforeUids: fresh.equipment.map(row => row.uid), sentAt: fresh.now };
-      const ticket = ledger.reserve({ forgeStarts: 1, forgeGold: step.gold }, { forgeStarts: settings.forge.dailyLimit, forgeGold: settings.forge.dailyGoldLimit }, {}, { uniqueKey: step.uniqueKey, details });
+      const ticket = ledger.reserve({ forgeStarts: 1, forgeGold: step.gold }, {}, {}, { uniqueKey: step.uniqueKey, details });
       if (!current() || settings !== getSettings()) { ledger.cancel(ticket); break; }
       let goldReservation, materialReservation;
       const { buildingId, makeId, beforeFinishTime, sentAt } = details;
@@ -344,8 +339,10 @@ export async function runEquipmentForge(client, protocol, config, player, { getS
           && making.finishTime > beforeFinishTime && making.finishTime >= sentAt;
       } };
       try {
-        confirmOrderMaterialSpends(player, actualStock);
-        materialReservation = beginOrderMaterialSpend(player, step.costs.filter(cost => cost.id !== 'GOLD').map(cost => ({ id: cost.id, have: actualStock.get(cost.id) ?? 0, need: cost.num })), step.label, { operation });
+        const materials = step.costs.filter(cost => cost.id !== 'GOLD')
+          .map(({ id, num }) => ({ id, have: actualStock.get(id) ?? 0, need: num }));
+        confirmOrderMaterialSpends(player, actualStock, materials.map(cost => cost.id));
+        materialReservation = beginOrderMaterialSpend(player, materials, step.label, { operation });
         goldReservation = reserveGold(player, fresh.gold, step.gold, 'MakeEquipRequest', { operation });
       } catch (error) { cancelOrderMaterialSpend(materialReservation); cancelUnsentGold(goldReservation); ledger.cancel(ticket); report({ step, ok: false, skipped: true, error: error.message }); continue; }
       if (!current() || settings !== getSettings()) { cancelOrderMaterialSpend(materialReservation); cancelUnsentGold(goldReservation); ledger.cancel(ticket); break; }
@@ -363,7 +360,7 @@ export async function runEquipmentForge(client, protocol, config, player, { getS
           await refreshOrderMaterialSpends(client, player, { enabled: current });
         }
         entry = { step, ok: confirmed, sent: true, status: confirmed ? 'confirmed' : 'unknown',
-          note: confirmed ? '服务器已确认新的锻造任务' : '下单结果待确认，保留材料/金币预算并停止重复下单' };
+          note: confirmed ? '服务器已确认新的锻造任务' : '下单结果待确认，预留本次材料和金币，暂不重复下单' };
       } catch (error) {
         if (error.notSent === true) {
           cancelOrderMaterialSpend(materialReservation);
@@ -376,7 +373,7 @@ export async function runEquipmentForge(client, protocol, config, player, { getS
           ledger.cancel(ticket);
           const failures = rejected.get(client) ?? new Map(); rejected.set(client, failures); failures.set(step.uniqueKey, Date.now() + 300000);
           entry = { step, ok: false, status: 'rejected', error: error.message };
-        } else entry = { step, ok: false, status: 'unknown', error: '锻造结果未知，保留预算：' + error.message };
+        } else entry = { step, ok: false, status: 'unknown', error: '锻造结果未知，预留本次材料和金币：' + error.message };
       }
       report(entry);
       if (entry.status !== 'rejected') for (const cost of step.costs) balances.set(cost.id, (balances.get(cost.id) ?? 0) - cost.num);

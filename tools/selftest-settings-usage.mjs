@@ -47,10 +47,11 @@ async function test(name, action) {
   console.log('通过：' + name);
 }
 
-await test('金币预算不足的真实锻造计划完整显示原因且不重复', async () => {
-  const result = await forgePreview((fixture, settings) => { settings.forge.dailyGoldLimit = 1999; });
+await test('金币不足的真实锻造计划完整显示原因且不重复', async () => {
+  const result = await forgePreview(fixture => { fixture.state.gold = 1999; });
   assert.equal(result.plan.actions.length, 0);
-  assert.equal(summary(result).condition, '执行条件：1装备厂：会超过今日锻造金币预算');
+  assert.match(result.plan.factories[0].reason, /金币不足/);
+  assert.equal(summary(result).condition, '执行条件：1装备厂：' + result.plan.factories[0].reason);
 });
 
 await test('正常可制造时摘要补充工厂结果，不把无备注当成受限', async () => {

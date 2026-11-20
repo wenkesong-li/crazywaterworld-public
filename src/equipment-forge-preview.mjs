@@ -5,12 +5,11 @@ import { weeklyActivityActionSettings } from './weekly-activity-runner.mjs';
 // Weekly participation may enable today's work independently of the ordinary
 // switches. When it waits, the ordinary plan still follows its own settings.
 export async function previewEquipmentForge(client, protocol, config, player, settings, {
-  usage = { counters: {} }, keys = {}, enabled = () => true,
+  keys = {}, enabled = () => true,
 } = {}) {
   const epoch = client.connectionEpoch;
   const snapshot = await readEquipmentForge(client, protocol, config, player, { enabled });
-  const budget = { usage, keys };
-  const original = planEquipmentForge(snapshot, config, settings, budget);
+  const original = planEquipmentForge(snapshot, config, settings, { keys });
   const weekly = settings?.weeklyActivity;
   if (!weekly?.enabled || !weekly.forgeEnabled || settings.forge.nativeAuto) {
     return { snapshot, plan: original };
@@ -36,8 +35,8 @@ export async function previewEquipmentForge(client, protocol, config, player, se
   }
   if (context?.kind === 'forge' && contextCurrent) {
     const effective = weeklyActivityActionSettings(context, config);
-    const plan = planEquipmentForge(snapshot, config, effective, budget);
-    plan.notes.unshift('当前为装备打造主题，军备竞赛独立执行领取和制造，普通锻造开关关闭也可参与；普通配置仍独立运行，共用预算且不重复下单');
+    const plan = planEquipmentForge(snapshot, config, effective, { keys });
+    plan.notes.unshift('当前为装备打造主题，军备竞赛独立执行领取和制造，普通锻造开关关闭也可参与。普通锻造与军备竞赛共用工厂下单记录，同一批次只下单一次。');
     return { snapshot, plan };
   }
 

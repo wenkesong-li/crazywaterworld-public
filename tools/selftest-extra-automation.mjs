@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';import fs from'node:fs';import os from'n
 import{claimVipDaily,claimLimitedFree,claimWeekHeroStar,claimLinkageFree,recruitWithSkipAds,watchFreeRewardClock}from'../src/extra-free-rewards.mjs';
 import{createUsageLedger,defaultSettings}from'../src/automation-settings.mjs';import{loadProtocol}from'../src/proto.mjs';import{claimWeekly}from'../src/activities.mjs';import{runAllianceRadar}from'../src/alliance-radar.mjs';
 import{runLoop}from'../src/loop.mjs';
+import { rewardSchedule } from '../src/reward-schedule.mjs';
 import{planBaseAutomation,runBaseAutomation,watchBasePushes}from'../src/base-automation.mjs';import{pirateAdvanceFixture}from'./fixtures/pirate-advance.mjs';
 const p=loadProtocol(),dir=fs.mkdtempSync(path.join(os.tmpdir(),'cw-extra-'));let serial=0,total=0;
 const ledger=()=>createUsageLedger('test',{file:path.join(dir,String(++serial)+'.json')});
@@ -25,10 +26,65 @@ await test('VIP和两类免广告招募已接入真实整轮挂机入口',async(
  const c=client((n,b,c)=>{assert.equal(n,'GotVipDailyRewardRequest');c.writes.push(n);return reward;});await runLoop(c,p,{config:{tables:{VipFreeCfg:{data:[{level:3}]}}},player:{vip:{vipLevel:3,dailyReward:[]}},allowMutate:true,rounds:1,usageLedger:ledger(),isEnabled:k=>k==='vipDailyGift'});assert.equal(c.writes.length,1);
  const f=adFixture();await runLoop(f.c,p,{config:f.config,player:f.player,adChannel:{clientInfo:{appId:'14021170',channelId:'1400',originVersion:'74'},language:'zh_CN'},allowMutate:true,rounds:1,usageLedger:ledger(),isEnabled:k=>['heroAdRecruit','antiqueAdRecruit'].includes(k)});assert.deepEqual(f.recruits,{hero:3,antique:3});
 });
+await test('共享领奖检查回填已启用的 VIP 和战报行，每轮只查一次', async () => {
+  const settings = defaultSettings();
+  settings.activityAutomation.vip = settings.activityAutomation.pirates = true;
+  for (const flags of [
+    ['vipDailyGift', 'battleReportRewards'],
+    ['vipDaily', 'campaignReports'],
+    ['vipDaily', 'vipDailyGift', 'campaignReports', 'battleReportRewards'],
+  ]) {
+    let reportReads = 0;
+    const c = client(name => {
+      assert.equal(name, 'CampaignReportsRequest');
+      reportReads++;
+      return { total: 0, reports: [] };
+    });
+    await runLoop(c, p, {
+      config: { tables: { VipFreeCfg: { data: [{ level: 3 }] } } },
+      player: { vip: { vipLevel: 3, dailyReward: [{ vipLevel: 3, isGot: true }] } },
+      getSettings: () => settings, isEnabled: key => flags.includes(key),
+      allowMutate: true, rounds: 1, usageLedger: ledger(),
+    });
+    assert.equal(reportReads, 1);
+    const schedule = rewardSchedule(c);
+    for (const [key, service, message] of [
+      ['vipDaily', 'vipDailyGift', '今日礼包已领取'],
+      ['campaignReports', 'battleReportRewards', '当前战报没有待领取奖励'],
+    ]) {
+      assert.equal(schedule.status(service)?.text, message);
+      if (flags.includes(key)) {
+        assert.equal(schedule.status(key)?.text, message);
+        assert.equal(schedule.status(key)?.state, 'waiting');
+        assert(schedule.nextCheck(key) > schedule.now());
+      } else assert.equal(schedule.status(key), null);
+    }
+  }
+});
 await test('情报已完成奖励逐条领取，无需月卡批量接口，空类型不派遣',async()=>{
  const f=pirateAdvanceFixture(),s=f.settings;f.player.guildId='1001007';s.radar.runEnabled=true;s.radar.enabled=true;s.radar.types=[];f.config.tables.ModuleOpenCfg.data.push({moduleId:'联盟情报',playerLevel:18});f.config.tables.WorldParamCfg.data.push({paramName:'情报事件消耗汽油',paramValue:500});let present=true;const read=f.client.request;f.client.request=async(n,b,r)=>{if(n==='RadarInfoRequest')return{radarInfo:{events:present?[{uid:'9007199254740995',eventId:10001,state:4,createTime:10}]:[]}};if(n==='RadarGetRewardRequest'){f.client.writes.push({n,b});present=false;return reward;}return read(n,b,r);};const args={getSettings:()=>s,ledger:ledger(),enabled:()=>true,report:()=>{}};await runAllianceRadar(f.client,f.config,f.player,args);await runAllianceRadar(f.client,f.config,f.player,args);assert.equal(f.client.writes.length,1);assert.equal(f.client.writes[0].n,'RadarGetRewardRequest');
 });
 await test('联盟情报独立开关能驱动整轮挂机，不依赖基地项目',async()=>{
  const f=pirateAdvanceFixture(),s=f.settings;f.player.guildId='1001007';s.loop.world=false;s.radar.runEnabled=true;s.radar.enabled=true;s.radar.fleetIds=['1远征船'];s.radar.petrolReserve=0;f.config.tables.ModuleOpenCfg.data.push({moduleId:'联盟情报',playerLevel:18});f.config.tables.WorldParamCfg.data.push({paramName:'情报事件消耗汽油',paramValue:500});let status=1;const read=f.client.request;f.client.request=async(n,b,r)=>n==='RadarInfoRequest'?{radarInfo:{events:[{uid:'9007199254740995',eventId:10001,state:status,createTime:10,pirate:{type:1,level:1}}]}}:read(n,b,r);f.client.sendWatch=async(n,b)=>{assert.equal(n,'RadarSendFleetsRequest');f.client.writes.push({n,b});status=3;};await runLoop(f.client,p,{config:f.config,player:f.player,getSettings:()=>s,usageLedger:ledger(),allowMutate:true,rounds:1,isEnabled:()=>false});assert.equal(f.client.writes.length,1);
+});
+await test('开启自动处理情报后随挂机识别普通月卡并一键领奖', async () => {
+  const { client, config, player, settings } = pirateAdvanceFixture();
+  player.guildId = '1001007';
+  settings.radar.runEnabled = settings.radar.enabled = true;
+  const read = client.request;
+  let events = [{ uid: '9007199254740995', eventId: 10001, state: 4, createTime: 10 }];
+  client.request = async (name, body, response) => {
+    if (name === 'MonthCardRequest') return { cardItem: [{ type: p.MonthCardType.MONTH_CARD_NORMAL, endTime: -1 }] };
+    if (name === 'RadarInfoRequest') return { radarInfo: { events } };
+    return read(name, body, response);
+  };
+  client.sendWatch = async (name, body, { beforeSend }) => {
+    beforeSend();
+    client.writes.push({ name, body });
+    events = [];
+  };
+  await runLoop(client, p, { config, player, getSettings: () => settings, usageLedger: ledger(),
+    allowMutate: true, rounds: 1, isEnabled: () => false });
+  assert.deepEqual(client.writes, [{ name: 'RadarGetAllRewardsRequest', body: {} }]);
 });
 console.log('补充自动化专项 '+total+'/'+total+' 通过');

@@ -29,6 +29,8 @@ fs.writeFileSync(process.env.CW_CONFIG_PACK, JSON.stringify([
     { buildingType: '农田', name: '农田' },
   ] }],
   [5, 'BuildingProduceParamCfg', { data: [{ paramName: '制造位上限', paramValue: 6 }] }],
+  [6, 'BuildingProduceCfg', { data: [{ itemId: '烤鱼', buildType: '食品厂', unlockLevel: 1, produceTime: 60 }] }],
+  [7, 'GameParamCfg', { data: [{ paramName: '产品存量初始上限', paramValue: 50 }] }],
 ]));
 const { saveStore, DATA_DIR } = await import('../src/accounts.mjs');
 assert.equal(DATA_DIR, dir);

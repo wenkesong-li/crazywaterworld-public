@@ -149,7 +149,8 @@ try {
       "900",
     );
     assert.equal(
-      requests.filter((row) => row.url.includes("/ui/chunks/")).length,
+      requests.filter((row) => row.url.includes("/ui/chunks/login-settings-"))
+        .length,
       1,
     );
     assert(
@@ -408,7 +409,8 @@ try {
     );
     assert.equal(posts(), count, "关闭和切换编辑账号恢复草稿不自动提交");
     assert.equal(
-      requests.filter((row) => row.url.includes("/ui/chunks/")).length,
+      requests.filter((row) => row.url.includes("/ui/chunks/login-settings-"))
+        .length,
       1,
     );
   });
@@ -460,6 +462,97 @@ try {
     );
     assert.equal(await page.locator("#login-deep-start").inputValue(), "23:00");
     assert.equal(await page.locator("#login-deep-end").inputValue(), "06:00");
+  });
+
+  await test("日常任务显示进度，按账号执行所选行并回读，花钻前可取消", async () => {
+    await closeSettings();
+    await page.locator('#tabs [data-tab="resources"]').click();
+    await page.locator('[data-resource-tab="dailies"]').click();
+    const panel = page.locator("#tab-dailies");
+    await panel.getByText("账号已暂停，请先恢复托管").waitFor();
+    let claimed = false;
+    const writes = [];
+    await page.route(/\/api\/dailies(?:\/single)?\?/, async (route) => {
+      const request = route.request();
+      assert.equal(new URL(request.url()).searchParams.get("account"), "a");
+      if (request.method() === "POST") {
+        writes.push(request.postDataJSON());
+        claimed = true;
+        return route.fulfill({ json: { ok: true, label: "已完成并领取奖励" } });
+      }
+      return route.fulfill({
+        json: {
+          tasks: [
+            {
+              task: {
+                id: 1001,
+                title: "登录游戏",
+                progress: 1,
+                targetProgress: 1,
+              },
+              status: "done",
+              manual: { token: "login", ruby: 0, label: "领取奖励" },
+            },
+            {
+              task: {
+                id: 1004,
+                title: "领取挂机收益",
+                progress: +claimed,
+                targetProgress: 1,
+                rewardClaimed: claimed,
+              },
+              status: claimed ? "done" : "ready",
+              manual: claimed
+                ? { reason: "已领取" }
+                : { token: "afk", ruby: 0, label: "完成此项" },
+            },
+            {
+              task: {
+                id: 1007,
+                title: "折扣商店购买",
+                progress: 0,
+                targetProgress: 1,
+              },
+              status: "ready",
+              manual: { token: "shop", ruby: 16, label: "完成 · 16 钻石" },
+            },
+          ],
+        },
+      });
+    });
+    app.sessions.get("a").paused = false;
+    await page.evaluate(() =>
+      window.cwConsoleStore
+        .getState()
+        .actions.patchStatus("a", { paused: false }),
+    );
+    await panel.getByText("已完成 1 / 3").waitFor();
+    const table = panel.getByRole("table", { name: "日常任务进度" });
+    const names = table.locator("tbody tr td:first-child > span");
+    const order = ["登录游戏", "领取挂机收益", "折扣商店购买"];
+    assert.deepEqual(await names.allTextContents(), order);
+    await table.getByRole("button", { name: "领取奖励" }).waitFor();
+    const paid = panel.getByRole("button", { name: "完成 · 16 钻石" });
+    page.once("dialog", (dialog) => dialog.dismiss());
+    await paid.click();
+    assert.deepEqual(writes, []);
+    await panel.getByRole("button", { name: "完成此项" }).click();
+    await panel.getByText("已完成 2 / 3").waitFor();
+    await table
+      .getByRole("row", { name: /领取挂机收益/ })
+      .getByText("已领取")
+      .waitFor();
+    assert.deepEqual(await names.allTextContents(), order);
+    assert.deepEqual(writes, [{ confirm: true, token: "afk", paid: false }]);
+    for (const width of [1440, 360]) {
+      await page.setViewportSize({ width, height: 880 });
+      assert(await panel.evaluate((el) => el.scrollWidth <= el.clientWidth));
+      await panel.screenshot({
+        path: path.join(output, `daily-tasks-${width}.png`),
+      });
+    }
+    app.sessions.get("a").paused = true;
+    await page.locator('#tabs [data-tab="account"]').click();
   });
 
   await test("没有账号时显示添加账号入口，且不加载登录设置表单", async () => {

@@ -80,6 +80,17 @@ function defaultSeats(config, members) {
     .map((member, i) => ({ ...member, x: slots[i][0], y: slots[i][1] }));
 }
 
+function resolveGuideFormation(config, lineup, unlocked) {
+  const locked = lineup.presetId !== defaultPreset && !unlocked.has(lineup.presetId);
+  const seats = locked ? defaultSeats(config, lineup.members) : lineup.members;
+  if (!seats) return null;
+  return {
+    presetId: locked ? defaultPreset : lineup.presetId,
+    heroPositions: seats.map(s => ({ heroId: s.heroId, pos: { x: s.x, y: s.y } })),
+    note: locked ? presetName(config, lineup.presetId) + '尚未解锁，使用基础阵型站位' : '',
+  };
+}
+
 function recommend(target, { config, catalog, roster, names, unlocked, capacity }) {
   const tiers = tierTables[target.mode](target.later);
   const power = id => roster.get(id)?.power ?? 0;
@@ -102,16 +113,14 @@ function recommend(target, { config, catalog, roster, names, unlocked, capacity 
       continue;
     }
     if (lineup.members.length > capacity) continue;
-    const locked = lineup.presetId !== defaultPreset && !unlocked.has(lineup.presetId);
-    const seats = locked ? defaultSeats(config, lineup.members) : lineup.members;
-    if (!seats) continue;
-    const presetId = locked ? defaultPreset : lineup.presetId;
-    const heroPositions = seats.map(s => ({ heroId: s.heroId, pos: { x: s.x, y: s.y } }));
+    const resolved = resolveGuideFormation(config, lineup, unlocked);
+    if (!resolved) continue;
+    const { presetId, heroPositions, note } = resolved;
     const isCurrent = JSON.stringify(formationSignature({ presetId, heroPositions })) === currentSignature;
     applicable.push({
       ...summary, presetId, presetName: presetName(config, presetId), heroPositions, isCurrent,
       delta: total - currentPower, pet: lineup.pet,
-      note: locked ? presetName(config, lineup.presetId) + '尚未解锁，保存时改用基础阵型站位' : '',
+      note,
       previewKey: isCurrent ? null : createHash('sha256').update(JSON.stringify([target.key, currentSignature, presetId, heroPositions])).digest('hex'),
     });
   }
@@ -297,6 +306,28 @@ async function loadTargets(client, config, player) {
 export async function readLineups(client, config, player) {
   const targets = await loadTargets(client, config, player);
   return { targets: targets.map(({ save, ...target }) => target) };
+}
+
+// Saved challenge presets use the mainline formation module. The editor has
+// already read the roster, unlocked formations and capacity for this account.
+export function editorLineupRecommendations(config, editor) {
+  const roster = new Map(editor.heroes.map(hero => [hero.heroId, hero]));
+  const names = new Map(rows(config, 'HeroCfg').map(hero => [hero.id, hero.name]));
+  const unlocked = new Set(editor.formations.filter(type => type.unlocked).map(type => type.presetId));
+  return lineupCatalog(config).map(lineup => {
+    const resolved = resolveGuideFormation(config, lineup, unlocked);
+    const nameOf = id => roster.get(id)?.name || names.get(id) || id;
+    const missing = lineup.members.filter(m => !roster.has(m.heroId)).map(m => nameOf(m.heroId));
+    const reasons = [];
+    if (missing.length) reasons.push('缺少' + missing.join('、'));
+    if (lineup.members.length > editor.capacity) reasons.push('需要 ' + lineup.members.length + ' 个上阵名额，当前 ' + editor.capacity + ' 个');
+    if (!resolved) reasons.push('尚未解锁该阵型，基础阵型站位不足');
+    return {
+      label: lineup.labels.join(' / '), heroes: lineup.members.map(m => nameOf(m.heroId)),
+      presetName: presetName(config, lineup.presetId), note: resolved?.note || '', reason: reasons.join('。'),
+      formation: reasons.length ? null : { presetId: resolved.presetId, heroPositions: resolved.heroPositions },
+    };
+  }).sort((a, b) => Number(!a.formation) - Number(!b.formation));
 }
 
 export async function applyLineup(client, config, player, { targetKey, previewKey, enabled = () => true }) {

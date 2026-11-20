@@ -2,7 +2,6 @@
 import { EventEmitter } from 'node:events';
 import { loadProtocol } from '../../src/proto.mjs';
 import { defaultSettings } from '../../src/automation-settings.mjs';
-import { repairDiamondCost } from '../../src/fleet-speed-evidence.mjs';
 const protocol = loadProtocol(), table = data => ({ data });
 let nextPlayer = 9007199254840000n;
 export function siliconSettings() {
@@ -13,7 +12,7 @@ export function siliconSettings() {
 export function siliconFixture() {
   const now = Math.floor(Date.now() / 1000), playerId = String(++nextPlayer);
   const player = protocol.LoginResponse.decode(protocol.LoginResponse.encode({ playerInfo: { playerId, nickname: '硅矿测试船长', guildId: '9007199254741007', worldId: 3001001, worldOpenTime: now - 86400 * 10, level: 36 } }).finish()).playerInfo;
-  const state = { fuel: 50000, ruby: 5000, repairMinutes: 0, fightTimes: 0, maxFightTimes: 30,
+  const state = { fuel: 50000, ruby: 5000, fightTimes: 0, maxFightTimes: 30,
     reward: { myRewardTimes: 0, maxRewardTimes: 100, rewardResetTime: now + 86400 },
     mines: [3, 4, 5].map(color => ({ gridId: color * 1000, color, occupiedNum: 0, positionNum: color === 3 ? 999 : 3 })),
     positions: { 3000: [], 4000: [], 5000: [] }, blacklist: [], reports: [], reportDetails: {},
@@ -24,8 +23,7 @@ export function siliconFixture() {
     repair: { unitRepairCost: 2, unitRepairTime: 1 } };
   const config = { tables: { ModuleOpenCfg: table([{ moduleId: '世界', playerLevel: 16 }]), GameplayOpenCfg: table([{ gameplay: '芯片', openDays: [0, 0, 1, 1] }]),
     ChipMineCfg: table([['BLUE', 3, '初等硅矿'], ['PURPLE', 4, '中等硅矿'], ['ORANGE', 5, '高等硅矿']].map(([quality, qualityIndex, name]) => ({ quality, qualityIndex, name }))),
-    WorldParamCfg: table([{ paramName: '采集硅矿消耗汽油', paramValue: 500 }, { paramName: '行军加速消耗', paramValue: 30 }]),
-    SpeedUpRubyCfg: table([{ minute: 0, fleet: 10 }, { minute: 60, fleet: 11 }, { minute: 240, fleet: 20 }]) } };
+    WorldParamCfg: table([{ paramName: '采集硅矿消耗汽油', paramValue: 500 }, { paramName: '行军加速消耗', paramValue: 30 }]) } };
   const client = new EventEmitter(); client.connected = true; client.reads = []; client.writes = []; client.serverClockOffsetMs = 0;
   const f = { player, protocol, state, config, client, unknown: false, reject: false, occupyImmediately: false, beforeRead: null, afterWrite: null };
   const time = () => Math.floor((Date.now() + client.serverClockOffsetMs) / 1000);
@@ -63,11 +61,6 @@ export function siliconFixture() {
       if (f.occupyImmediately) f.occupy(body.fleetId, body.gridId, body.index);
     } else if (name === 'ChipMineRetreatRequest') f.returnFleet(body.fleetId);
     else if (name === 'RepairFleetRequest') { state.fuel -= (fleet.maxDura - fleet.durability) * state.repair.unitRepairCost; Object.assign(fleet, { state: 4, repairing: { startTs: time(), endTs: time() + (fleet.maxDura - fleet.durability) * state.repair.unitRepairTime, endDura: fleet.maxDura } }); }
-    else if (name === 'SpeedUpRepairRequest') {
-      const minutes = Math.ceil((fleet.repairing.endTs - time()) / 60);
-      state.ruby -= repairDiamondCost(config, minutes, state.repairMinutes); state.repairMinutes += minutes;
-      fleet.durability = fleet.maxDura; fleet.state = 1; fleet.repairing = null;
-    }
     else if (name === 'SpeedUpFleetRequest') { state.ruby -= 30; fleet.moveEndTs = time() + Math.floor((fleet.moveEndTs - time()) / 2); }
     else throw Error('隔离硅矿夹具禁止未声明写入：' + name);
     await f.afterWrite?.(name, body);

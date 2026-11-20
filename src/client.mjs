@@ -4,10 +4,12 @@ import { EventEmitter } from 'node:events';
 import { createCodec } from './codec.mjs';
 import { inspectGameFrame } from './frame-header.mjs';
 import { emitDiagnostic } from './trace-log.mjs';
+import { rememberTournament } from './tournament-state.mjs';
 
 export const MAX_SEQ = 2147483647;
 const HALF_SEQ = (MAX_SEQ - 1) / 2;
 const MEMBER_REQUESTS = new Set([
+  'RadarInfoRequest', 'RadarGetAllRewardsRequest',
   'GuildInfoRequest', 'GotGuildWelfarePackRequest', 'GuildAidListRequest', 'GuildCityInfoRequest',
   'GuildTechInfoRequest', 'UpgradeGuildTechRequest', 'GuildOrderRequest', 'TradeGuildRadarRequest', 'TradeCityReportRequest',
   'GuildAidHelpRequest', 'GuildAidAskRequest', 'MyGuildAidRequest', 'GotMyGuildAidRequest', 'GotGuildTitleRewardRequest',
@@ -53,6 +55,7 @@ export class GameClient extends EventEmitter {
     super();
     // 各玩法在同一连接上注册独立推送观察器（均按连接单例）；保留有限上限以发现重复注册。
     this.setMaxListeners(32);
+    this.on('message', ({ name, body }) => rememberTournament(this, name, body));
     this.url = url;
     this.login = login;
     // Keep helpers and the wire codec on the same immutable protocol snapshot.
@@ -233,15 +236,22 @@ export class GameClient extends EventEmitter {
   // 页面只读请求插在队列任务的两次请求之间：先拦住新的普通请求，等在途请求都有结果再发送。
   // PromptResponse 没有请求编号，必须保持同一时刻只有一方在途，拒绝才不会记到别的请求头上。
   // 只能用于不改变游戏状态的读取。
-  interleaveRead(work) {
+  interleaveRead(work, { whileCurrent } = {}) {
     const run = async () => {
+      if (whileCurrent && !whileCurrent()) return;
       let open;
       this.readGate = new Promise((resolve) => { open = resolve; });
       const deadline = Date.now() + READ_GATE_LIMIT_MS;
       const release = () => { clearTimeout(limit); this.readGate = null; open(); };
-      const limit = setTimeout(release, READ_GATE_LIMIT_MS);
+      // Background discovery has bounded request timeouts and drains its whole
+      // batch. Never release its gate while a reply could reach another caller.
+      const limit = whileCurrent ? null : setTimeout(release, READ_GATE_LIMIT_MS);
       try {
-        while (this.connected && Date.now() < deadline && (this.pending.length || this.watchers.length)) await sleep(5);
+        while (this.connected && Date.now() < deadline && (this.pending.length || this.watchers.length)) {
+          if (whileCurrent && !whileCurrent()) return;
+          await sleep(5);
+        }
+        if (whileCurrent && (!whileCurrent() || !this.connected || this.pending.length || this.watchers.length)) return;
         return await readScope.run(this, work);
       } finally {
         release();
@@ -538,6 +548,7 @@ export class GameClient extends EventEmitter {
   }
 
   releaseRequests(reason) {
+    this.tournament = undefined;
     clearInterval(this.gapTimer);
     this.gapTimer = null;
     if (this.tickTimer !== null) clearInterval(this.tickTimer);

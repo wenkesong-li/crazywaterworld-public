@@ -93,6 +93,178 @@ async function dispatchRound({ beforeWar = false, unknownCounts = false, opening
 }
 
 try {
+  await check('巨轮和城战按各自服务器时刻提前召回选中矿队，采矿开关关闭也可执行', async () => {
+    for (const [source, scenario] of [['treasure','ready'],['cityWar','ready'],['cityWar','firstReward'],
+      ['treasure','rescheduled'], ['cityWar','disabled'], ['treasure','noTime'], ['cityWar','mining']]) {
+      const base = Date.UTC(2026,10,20,3);
+      let clock = base;
+      Date.now = () => clock;
+      try {
+        const f = warForgeFixture(), settings = warForgeSettings(), usage = ledger(), retreats = [];
+        f.client.serverClockOffsetMs = 7000;
+        const start = (base + 7000) / 1000 + 70;
+        f.state.stats.nextRefreshTime = scenario === 'noTime' ? 0 : start;
+        f.state.targets = [];
+        f.state.war = { startTime: start, endTime: start + 3600, declarations: [] };
+        f.config.resources = { mapFiles: { 1: mapFile } };
+        f.config.tables.GameplayOpenCfg.data.push({ gameplay: '芯片', openDays: [1] });
+        f.config.tables.WorldParamCfg.data.push({ paramName: '采集硅矿消耗汽油', paramValue: 500 });
+        f.config.tables.ChipMineCfg = { data: [{ quality: 'ORANGE', qualityIndex: 5, name: '测试硅矿' }] };
+        settings.forge.enabled = settings.cityWar.reserveDuringWar = settings.cityWar.autoRepair = false;
+        settings.cityWar.enabled = source === 'cityWar';
+        settings.treasure.enabled = settings.treasure.autoJoin = source === 'treasure';
+        Object.assign(settings[source], { recallSilicon: scenario !== 'disabled', recallLeadMinutes: 1, checkEverySeconds: 300, fleetIds: ['1远征船'] });
+        if (scenario === 'mining') {
+          settings.silicon.enabled = settings.silicon.fleets[0].enabled = true;
+          settings.fleetDispatch.priority = ['silicon','cityWar'];
+        }
+        const reward = { myRewardTimes: 1, rewardResetTime: start + 3600, maxRewardTimes: 100 };
+        const positions = f.state.fleets.slice(0,2).map((fleet, index) => {
+          Object.assign(fleet, { state: 5, curGridIdx: 5000, chipWar: { rewardTs: scenario === 'firstReward' ? start - 45 : start + 900 } });
+          return { index, player: { fleetId: fleet.buildingId, avatar: {}, nickname: f.player.nickname, guildIdx: 7, power: 1000, rewardTimes: 1 } };
+        });
+        const request = f.client.request, send = f.client.sendWatch;
+        f.client.request = async (name, body = {}, reply = name.replace(/Request$/, 'Response')) => {
+          let response;
+          if (name === 'ChipMineRequest' && scenario === 'rescheduled') f.state.stats.nextRefreshTime = start + 3600;
+          if (name === 'ChipMineRequest' && scenario === 'firstReward') positions.forEach(p => { p.player.rewardTimes = Number(clock - base >= 25000); });
+          if (name === 'ChipMineListRequest') response = { chipMines: [{ color: 5, gridId: 5000, occupiedNum: positions.length, positionNum: 3 }] };
+          else if (name === 'ChipMineRewardRequest') response = { rewardInfo: reward };
+          else if (name === 'ChipMineRequest') response = { occupiedPositions: positions, occupiedNum: positions.length, positionNum: 3, fightTimes: 0, maxFightTimes: 30, rewardInfo: reward };
+          else return request(name, body, reply);
+          return f.protocol[reply].decode(f.protocol[reply].encode(response).finish());
+        };
+        f.client.sendWatch = async (name, body) => {
+          if (name !== 'ChipMineRetreatRequest') return send(name, body);
+          retreats.push([body.fleetId, clock - base]);
+          positions.splice(positions.findIndex(p => p.player.fleetId === body.fleetId),1);
+          Object.assign(f.state.fleets[0], { state: 2, startGridIdx: 5000, targetGridIdx: 700, targetCityId: 1,
+            chipWar: null, moveStartTs: start - 60, moveEndTs: start - 20 });
+        };
+        await runLoop(f.client, f.protocol, { config: f.config, player: f.player, rounds: 2, everyMs: 70000,
+          allowMutate: true, getSettings: () => settings, usageLedger: usage, isEnabled: () => false,
+          sleep: async ms => { assert(ms > 0); clock += ms;
+            if (retreats.length && (scenario === 'mining' || clock - base >= 50000)) {
+              Object.assign(f.state.fleets[0], { state: 1, targetGridIdx: 0, curGridIdx: 0 });
+              if (scenario === 'mining') f.client.emit('message', { name: 'SCMyFleetUpdate', body: { fleets: [f.state.fleets[0]] } });
+            } } });
+        const shouldRecall = ['ready','firstReward','mining'].includes(scenario);
+        assert.deepEqual(retreats, shouldRecall ? [['1远征船', scenario === 'firstReward' ? 25000 : 10000]] : [], source + scenario);
+        assert.deepEqual(positions.map(p => p.player.fleetId), shouldRecall ? ['2远征船'] : ['1远征船','2远征船']);
+        assert(!usage.hasKey('silicon-retreat:' + f.player.worldId + ':1'), '开战时已归队的矿队必须解除占用');
+      } finally { Date.now = realNow; }
+    }
+  });
+  await check('主轮跨开战和货轮刷新时按优先级接续，轮间分别按刷新和停战时间扫描', async () => {
+    for (const reserve of [false, true]) {
+      const hour = Date.UTC(2026, 10, 20, 2), base = hour - 12000;
+      let clock = base, queueSlot = 0, inQueue = false;
+      Date.now = () => clock;
+      try {
+        const f = warForgeFixture(), settings = warForgeSettings(), trace = [];
+        f.config.resources = { mapFiles: { 1: mapFile } };
+        f.client.serverClockOffsetMs = 7000;
+        f.state.targets = [];
+        f.state.war = { startTime: hour / 1000, endTime: hour / 1000 + 7, declarations: [] };
+        f.state.stats.nextRefreshTime = hour / 1000;
+        settings.forge.enabled = false;
+        settings.loop.dailies = settings.dailies.enabled = settings.schedule.freeGold = true;
+        Object.assign(settings.treasure, { enabled: true, autoJoin: true, follow: false, autoRepair: false, checkEverySeconds: 300 });
+        Object.assign(settings.cityWar, { autoRepair: false, reserveDuringWar: reserve, checkEverySeconds: 300 });
+        settings.fleetDispatch.priority = ['treasure', 'cityWar'];
+        f.beforeRead = name => {
+          assert(inQueue);
+          if (name === 'WarDeclarationRequest') trace.push(['war', clock - base, queueSlot]);
+          if (name === 'TreasureLootStatsRequest') {
+            trace.push(['ship', clock - base, queueSlot]);
+            if (clock - base === 7000) f.state.stats.nextRefreshTime = hour / 1000 + 4;
+          }
+          if (name === 'DailyTaskInfoRequest' && clock === base) {
+            trace.push(['daily', 0, queueSlot]);
+            clock += 7000;
+            if (reserve) for (let i = 0; i < 5; i++) f.client.emit('message', { name: 'SCTreasureLootRefresh', body: {} });
+          }
+        };
+        await runLoop(f.client, f.protocol, {
+          config: f.config, player: f.player, rounds: 2, everyMs: 14000, allowMutate: true,
+          usageLedger: ledger(), getSettings: () => settings, isEnabled: key => key === 'freeGold',
+          schedule: async work => {
+            assert(!inQueue); inQueue = true; queueSlot++;
+            try { return await work(); } finally { inQueue = false; }
+          },
+          sleep: async ms => { assert(!inQueue && ms > 0); clock += ms; },
+        });
+        const order = reserve ? ['war', 'ship'] : ['ship', 'war'];
+        assert.deepEqual(trace.map(([task, at]) => [task, at]), [
+          ...order.map(task => [task, 0]), ['daily', 0], ...order.map(task => [task, 7000]),
+          ['ship', 9000], ['war', 12000],
+        ]);
+        assert(trace[3][2] > trace[2][2], '耗时日常完成后让出队列，优先检查到期业务');
+        assert.deepEqual(f.client.writes, []);
+      } finally { Date.now = realNow; }
+    }
+  });
+  await check('主轮业务未返回时货轮和宣战推送触发只读扫描，写操作等待串行复核', async () => {
+    const f = warForgeFixture(), settings = warForgeSettings();
+    f.config.resources = { mapFiles: { 1: mapFile } };
+    settings.forge.enabled = settings.cityWar.autoRepair = false;
+    settings.loop.dailies = settings.dailies.enabled = settings.schedule.freeGold = true;
+    Object.assign(settings.treasure, { enabled: true, autoJoin: true, autoRepair: false });
+    f.state.targets = []; f.state.war.declarations = [];
+    let insideRead = false, waiting = false, finish;
+    const seen = [];
+    const scanned = new Promise(resolve => { finish = resolve; });
+    f.client.interleaveRead = async work => {
+      assert(!insideRead);
+      insideRead = true;
+      try { return await work(); } finally { insideRead = false; finish(); }
+    };
+    f.beforeRead = async name => {
+      if (insideRead) { assert(waiting); seen.push(name); }
+      if (name !== 'DailyTaskInfoRequest') return;
+      waiting = true;
+      for (const event of ['SCWarDeclaration', 'SCTreasureLootRefresh', 'SCTreasureLootRefresh']) {
+        f.client.emit('message', { name: event, body: {} });
+      }
+      let limit;
+      try {
+        await Promise.race([scanned, new Promise((_, reject) => {
+          limit = setTimeout(() => reject(Error('只读扫描仍在等待主轮结束')), 2000);
+        })]);
+      } finally { clearTimeout(limit); waiting = false; }
+    };
+    await runLoop(f.client, f.protocol, { config: f.config, player: f.player, rounds: 1, allowMutate: true,
+      getSettings: () => settings, usageLedger: ledger(), isEnabled: key => key === 'freeGold' });
+    assert.deepEqual(seen.sort(), ['TreasureLootListRequest', 'TreasureLootStatsRequest', 'WarDeclarationRequest']);
+    assert.deepEqual(f.client.writes, []);
+  });
+  await check('城战休战时等待开战，时段变更推送提前重排，战时恢复固定扫描', async () => {
+    const base = Date.UTC(2026, 10, 20, 2), stop = new AbortController();
+    let clock = base;
+    Date.now = () => clock;
+    try {
+      const f = warForgeFixture(), settings = warForgeSettings(), waits = [], reads = [];
+      f.config.resources = { mapFiles: { 1: mapFile } };
+      settings.forge.enabled = settings.cityWar.autoRepair = false;
+      f.state.war = { startTime: base / 1000 + 900, endTime: base / 1000 + 1800, declarations: [] };
+      f.beforeRead = name => { if (name === 'WarDeclarationRequest') reads.push(clock - base); };
+      await runLoop(f.client, f.protocol, {
+        config: f.config, player: f.player, rounds: 0, everyMs: 3600000, allowMutate: true, stop: stop.signal,
+        getSettings: () => settings, usageLedger: ledger(), isEnabled: () => false,
+        sleep: async ms => {
+          waits.push(ms);
+          if (waits.length === 1) {
+            clock += 20000;
+            f.state.war.startTime = clock / 1000 + 60;
+            f.client.emit('message', { name: 'SCCityWarTime', body: f.state.war });
+          } else if (waits.length === 2) clock += ms;
+          else stop.abort();
+        },
+      });
+      assert.deepEqual(waits, [900000, 60000, 15000]);
+      assert.deepEqual(reads, [0, 20000, 80000]);
+    } finally { Date.now = realNow; }
+  });
   await check('维修加速补满后同轮刷新占用并接续城战，不再等15秒检查周期',async()=>{
     let clock=Math.floor(realNow()/1000)*1000;Date.now=()=>clock;
     const stop=new AbortController();
@@ -191,12 +363,12 @@ try {
     }
   });
 
-  await check('原生委任额度为零只阻止接续，不解除城战预留', async () => {
+  await check('原生委任额度为零时直接接续并保留所选城战舰队', async () => {
     const f = warForgeFixture(), settings = warForgeSettings();
     f.config.tables.VipLevelCfg.data.find(row => row.level === 3).effects = [];
     const plan = await preview(f, settings);
-    assert.equal(plan.actions.length, 0);
-    assert(plan.fleets.every(fleet => /原生舰队委任尚未解锁/.test(fleet.reason)));
+    assert.deepEqual(plan.actions.map(step => step.buildingId), ['1远征船', '2远征船']);
+    assert.deepEqual(plan.nativeOffFleetIds, []);
     assert.deepEqual(plan.reservedFleetIds, ['1远征船', '2远征船']);
   });
 

@@ -269,6 +269,14 @@ test('建筑与多分组分类切换、键盘导航和旧链接都能定位同�
   assert.equal(f.env.hash, '#config-group-building');
   f.env.node('config-family-construction').onkeydown({ key: 'ArrowRight', preventDefault() {} });
   assert(visible(f.env.node('config-group-farm')), '再次进入生产保留上次选择');
+  const visibleTabs = () => panel.querySelectorAll('[data-config-group]').filter(visible).map(tab => tab.dataset.configGroup);
+  assert.deepEqual(visibleTabs(), ['factory', 'farm', 'pet', 'museum', 'gather']);
+  for (const [from, to] of [['farm', 'pet'], ['pet', 'museum']]) {
+    f.env.node('config-subtab-' + from).onkeydown({ key: 'ArrowRight', preventDefault() {}, stopPropagation() {} });
+    assert(visible(f.env.node('config-group-' + to)));
+  }
+  f.env.node('config-family-foundation').onclick();
+  assert.deepEqual(visibleTabs(), ['resources', 'gold']);
   f.env.hash = '#config-group-building'; f.applyHash();
   assert(visible(f.env.node('config-group-building')));
   f.activateGroup('building', true);
@@ -301,7 +309,9 @@ test('所有显式父项位于同组，字段无重复且依赖无环', () => {
     ['merchant.autoBuyPointers', 'merchant.autoSpeedUp'], ['merchant.pointerDailyDiamondLimit', 'merchant.autoBuyPointers'],
     ['silicon.fleets.0.huntPlayers', 'silicon.fleets.0.huntEnabled'],
     ['antique.targetStar', 'antique.star'],
-    ['treasure.marchTargetSeconds', 'treasure.marchSpeedUp'], ['treasure.dailyDiamondLimit', 'treasure.marchSpeedUp'],
+    ['cityWar.recallLeadMinutes', 'cityWar.recallSilicon'], ['treasure.recallLeadMinutes', 'treasure.recallSilicon'],
+    ['treasure.outboundSpeedUp', 'treasure.marchSpeedUp'], ['treasure.marchTargetSeconds', 'treasure.outboundSpeedUp'],
+    ['treasure.returnSpeedUp', 'treasure.marchSpeedUp'], ['treasure.returnTargetSeconds', 'treasure.returnSpeedUp'], ['treasure.dailyDiamondLimit', 'treasure.outboundSpeedUp'], ['treasure.returnDailyDiamondLimit', 'treasure.returnSpeedUp'],
   ]) assert.equal(fields.get(child)?.parent, parent, child);
 });
 test('巨轮跟随后续方式仅在跟随与反复攻占同时开启时展示，切换开关保留选项', () => {
@@ -516,25 +526,45 @@ test('三级开关关闭隐藏全部后代，重新启用保留子开关与预�
   assert(visible(budget.node)); assert.equal(parent.disclosure.getAttribute('aria-expanded'), 'true');
 });
 
-test('巨轮加速开关控制秒数与预算显隐，关闭后保留配置', () => {
+test('三支硅矿舰队仅展示去程和回城的加速开关、阈值和预算', () => {
+  const f = fixture(), fields = f.groups.find(group => group.id === 'silicon').fields;
+  for (const i of [0,1,2]) {
+    const prefix = 'silicon.fleets.' + i + '.';
+    for (const key of ['repairSpeedUp','repairDailyDiamonds','repairTargetSeconds']) assert(!fields.some(field => field.key === prefix + key));
+    assert(fields.some(field => field.key === prefix + 'autoRepair'));
+    for (const mode of ['march','return']) {
+      const toggle = prefix + mode + 'SpeedUp';
+      assert.equal(fields.find(field => field.key === toggle).parent, prefix + 'enabled');
+      for (const suffix of ['TargetSeconds','DailyDiamonds']) {
+        const field = fields.find(field => field.key === prefix + mode + suffix);
+        assert.equal(field.parent, toggle);
+        const fleet = f.editor.draft.silicon.fleets[i];
+        fleet.enabled = true; fleet[mode + 'SpeedUp'] = true; assert(field.when(f.editor.draft));
+        fleet[mode + 'SpeedUp'] = false; assert(!field.when(f.editor.draft));
+      }
+    }
+  }
+});
+
+test('巨轮去程和回城分别控制秒数与每日预算', () => {
   const f = fixture();
-  Object.assign(f.editor.draft.treasure, { marchTargetSeconds: 90, dailyDiamondLimit: 300 });
-  f.mount(f.groups.find(group => group.id === 'treasure').fields.filter(field => [
-    'treasure.marchSpeedUp', 'treasure.marchTargetSeconds', 'treasure.dailyDiamondLimit',
-  ].includes(field.key)));
-  const speed = f.widget('treasure.marchSpeedUp'), seconds = f.widget('treasure.marchTargetSeconds');
-  const budget = f.widget('treasure.dailyDiamondLimit');
-  assert.equal(speed.spec.kind, 'switch'); assert.equal(seconds.spec.unit, '秒'); assert.equal(budget.spec.unit, '钻石');
-  assert(!visible(seconds.node)); assert(!visible(budget.node));
-  f.set('treasure.marchSpeedUp', true);
-  assert(!visible(seconds.node),'启用功能不自动展开配置');f.expand('treasure.marchSpeedUp');
-  assert(visible(seconds.node)); assert(visible(budget.node));
+  Object.assign(f.editor.draft.treasure, { marchTargetSeconds: 90, returnTargetSeconds: 20, dailyDiamondLimit: 300 });
+  const fields = ['marchSpeedUp', 'outboundSpeedUp', 'marchTargetSeconds', 'returnSpeedUp', 'returnTargetSeconds', 'dailyDiamondLimit', 'returnDailyDiamondLimit'];
+  f.mount(f.groups.find(group => group.id === 'treasure').fields.filter(field => fields.includes(field.key.split('.')[1])));
+  const shown = key => visible(f.widget('treasure.' + key).node);
+  assert(!shown('outboundSpeedUp')); assert(!shown('returnSpeedUp')); assert(!shown('dailyDiamondLimit'));
+  f.set('treasure.marchSpeedUp', true); f.expand('treasure.marchSpeedUp');
+  assert(shown('outboundSpeedUp')); assert(shown('returnSpeedUp')); assert(!shown('dailyDiamondLimit'));
+  f.expand('treasure.outboundSpeedUp');
+  assert(shown('marchTargetSeconds')); assert(shown('dailyDiamondLimit')); assert(!shown('returnTargetSeconds'));
+  f.set('treasure.returnSpeedUp', true); f.expand('treasure.returnSpeedUp');
+  f.set('treasure.outboundSpeedUp', false);
+  assert(!shown('marchTargetSeconds')); assert(shown('returnTargetSeconds')); assert(!shown('dailyDiamondLimit')); assert(shown('returnDailyDiamondLimit'));
   f.set('treasure.marchSpeedUp', false);
-  assert(!visible(seconds.node)); assert(!visible(budget.node));
+  assert(!shown('returnTargetSeconds')); assert(!shown('dailyDiamondLimit'));
   assert.equal(f.editor.draft.treasure.marchTargetSeconds, 90);
+  assert.equal(f.editor.draft.treasure.returnTargetSeconds, 20);
   assert.equal(f.editor.draft.treasure.dailyDiamondLimit, 300);
-  f.set('treasure.marchSpeedUp', true);
-  assert(visible(seconds.node)); assert(visible(budget.node));
 });
 
 test('默认收起、按需展开；手动收起后重新启用不擅自展开', () => {
@@ -637,8 +667,14 @@ test('世界Boss领奖只在世界分组出现，首战派遣与领奖独立控�
   f.set('worldBoss.enabled', false);
   assert.equal(f.editor.draft.schedule.worldBossRewards, true, '关闭首战不关闭领奖');
   assert(visible(reward.node), '关闭首战后领奖仍可编辑');
-  const challenges = f.editor.groups.get('daily-challenges');
-  assert.deepEqual(challenges.fields.map(field => field.key), ['schedule.leagueCollect', 'schedule.leaguePassRewards']);
+  const ids = [...f.editor.groups.values()].filter(item => item.category === 'daily').map(item => item.id);
+  const daily = ids.indexOf('daily-actions');
+  assert.deepEqual(ids.slice(daily - 2, daily + 2), ['league', 'arena', 'daily-actions', 'ad-rewards']);
+  assert.deepEqual(f.editor.groups.get('arena').fields.map(field => field.key), ['schedule.arena', 'arena.target', 'arena.maxPowerRatio', 'arena.dailyBattleLimit', 'arena.claimTask']);
+  assert.deepEqual(f.editor.groups.get('league').fields.map(field => field.key),
+    ['schedule.leagueChallenge', 'league.target', 'league.maxPowerRatio', 'league.dailyBattleLimit', 'league.claimTask', 'schedule.leagueCollect', 'schedule.leaguePassRewards']);
+  f.env.hash = '#config-group-daily-challenges'; f.applyHash();
+  assert.equal(f.editor.selectedGroups.daily, 'league');
 });
 
 test('所有模块主控与参数在同组，英雄组合主控保留细项，运行安排入口移除', () => {

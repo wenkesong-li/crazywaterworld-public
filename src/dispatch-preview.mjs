@@ -1,5 +1,7 @@
 import { fleetRecordReason, dispatchReservationReason } from './fleet-availability.mjs';
 import { resourceReserve } from './automation-policy.mjs';
+import { radarKey } from './fleet-settlement.mjs';
+import { previouslySwept } from './radar-sweep.mjs';
 
 export const pendingPetrol = ledger => ['radarPetrol','piratePetrol','treasurePetrol','cityWarPetrol','worldBossPetrol','siliconPetrol','resourceFieldPetrol'].reduce((n,k)=>n+(ledger.pendingCounters()[k]??0),0);
 export function planRadarPreview(snapshot, settings, ledger, client, {cityReservedFleetIds=null}={}) {
@@ -11,8 +13,9 @@ export function planRadarPreview(snapshot, settings, ledger, client, {cityReserv
   (!p.fleetIds.includes(f.buildingId)?'未选择':f.state!==1||f.curGridIdx||f.treasureLootUid||f.chipWar?.rewardTs?'舰队已有任务':!Number.isSafeInteger(f.maxDura)||f.maxDura<=0||f.durability<=0||f.durability<f.maxDura*p.minDurabilityPercent/100?'耐久不足或未同步':!snapshot.buildings.some(b=>b.buildingId===f.buildingId&&b.level>0&&b.fleet?.formation?.heroPositions?.some(x=>x.heroId))?'缺少编队':'')}));
  if(disabled)notes.push(disabled);
  const idle=fleets.filter(f=>!f.reason);
+ const records=ledger.keyRecords(),batchClaims=previouslySwept(snapshot,records);
  for(const e of snapshot.events){
-  if(e.state===4&&!disabled)actions.push({kind:'radarClaim',label:'领取已完成情报 '+e.eventId,costs:[]});
+  if(e.state===4&&!disabled&&!batchClaims.has(radarKey(e))&&!records['radar-claim:'+snapshot.world+':'+radarKey(e)])actions.push({kind:'radarClaim',label:'领取已完成情报 '+e.eventId,costs:[]});
   if(e.state!==1||disabled||!p.types.includes(e.fixed?'fixed':e.pirate?'pirate':e.refugee?'refugee':e.collectRes?'collect':'spy'))continue;
   const key='radar-send:'+snapshot.world+':'+(e.fixed?'fixed-'+e.eventId+'-'+e.createTime:e.uid);
   let reason=ledger.hasKey(key)?'前次请求已记录，等待核对':!idle.length?'没有空闲且符合条件的舰队':fuel<snapshot.cost?'可用汽油不足以出征':'';

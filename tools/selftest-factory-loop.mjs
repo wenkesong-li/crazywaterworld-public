@@ -257,7 +257,9 @@ try {
   });
   await test('有限一轮完成即退出，不因生产计时器继续等待或后台运行', async () => {
     const f = integration({ rounds: 1 });
+    f.settings.factory.cooperateNative = true;
     const result = await f.run(); assert.equal(result.history.length, 1); assert.deepEqual(f.sleeps, []);
+    assert(f.reports.some(row => row.taskKey === 'nativeProduce' && row.reason === '当前没有开启原生自动生产的工厂'));
     assert.equal(writes(f).length, 0); f.finish(); await f.clean();
   });
 

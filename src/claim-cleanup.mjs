@@ -1,4 +1,7 @@
 import { AutomationSkip, exactAutomationId, automationWireId } from './automation-policy.mjs';
+import { clock } from './activity-actions.mjs';
+import { gameplayOpenDay, seasonOf, worldOpenDays } from './extra-rewards.mjs';
+import { tournamentRunning } from './tournament-state.mjs';
 
 const activeClients = new WeakSet();
 const activeRecords = new Set();
@@ -23,8 +26,53 @@ function inventoryMap(rows) {
   return inventory;
 }
 
-async function eligibleItems(read, config, equipment, qualities) {
+async function readPetAssignments(read, config, player, client) {
   const used = new Set();
+  const buildings = (await read('OnWater')).building;
+  if (!Array.isArray(buildings) || !buildings.length) throw Error('海兽值守未同步');
+  for (const building of buildings) {
+    if (building.petServe) markUsed(used, building.petServe.petUid);
+    if (building.fleet?.formation) markUsed(used, building.fleet.formation.petUid);
+  }
+  const main = (await read('GetFormation', { module: 1 })).formation;
+  if (main) markUsed(used, main.petUid);
+
+  const age = worldOpenDays(player, clock(client));
+  const available = name => {
+    const level = config.tables.ModuleOpenCfg?.data.find(row => row.moduleId === name)?.playerLevel;
+    if (player?.level > 0 && player.level < level) return false;
+    // 开放时间未知时以服务器实际编队为准。
+    const day = gameplayOpenDay(config, player, name);
+    return !seasonOf(player) || age === null || age >= day;
+  };
+  if (available('跨服积分赛')) {
+    const teams = (await read('LeagueInfo')).ownFormations;
+    if (!Array.isArray(teams)) throw Error('积分赛编队未同步');
+    for (const team of teams) markUsed(used, team.petUid);
+  }
+  if (available('远征')) {
+    const expedition = (await read('ExpeditionInfo')).formation;
+    if (expedition) markUsed(used, expedition.petUid);
+  }
+  if (available('极限试炼')) {
+    const { raidId } = await read('UltraOpen');
+    if (!Number.isInteger(raidId) || raidId < 0) throw Error('极限试炼开放状态未同步');
+    if (raidId > 0) {
+      const { forms } = await read('UltraInfo');
+      if (!Array.isArray(forms)) throw Error('极限试炼编队未同步');
+      for (const team of forms) markUsed(used, team.petUid);
+    }
+  }
+  if (tournamentRunning(client.tournament) && client.tournament.qualified) {
+    const { team } = await read('TournamentFormation');
+    if (!Array.isArray(team)) throw Error('擂台赛编队未同步');
+    for (const slot of team) if (slot.formation) markUsed(used, slot.formation.petUid);
+  }
+  return used;
+}
+
+async function eligibleItems(read, config, equipment, qualities, player, client) {
+  let used = new Set();
   let inventory, definitions;
   if (equipment) {
     const heroes = (await read('AllHero')).heroes;
@@ -36,39 +84,29 @@ async function eligibleItems(read, config, equipment, qualities) {
     inventory = inventoryMap((await read('Equips')).equip);
     definitions = new Map(config.tables.EquipCfg.data.map(row => [row.id, row.quality]));
   } else {
-    const buildings = (await read('OnWater')).building;
-    if (!Array.isArray(buildings) || !buildings.length) throw Error('海兽值守未同步');
-    for (const building of buildings) {
-      if (building.petServe) markUsed(used, building.petServe.petUid);
-      if (building.fleet?.formation) markUsed(used, building.fleet.formation.petUid);
-    }
-    const main = (await read('GetFormation', { module: 1 })).formation;
-    if (main) markUsed(used, main.petUid);
-    // 当前协议没有 LeagueFormationRequest，本人的编队由 LeagueInfoResponse 返回。
-    const teams = (await read('LeagueInfo')).ownFormations;
-    if (!Array.isArray(teams)) throw Error('积分赛编队未同步');
-    for (const team of teams) markUsed(used, team.petUid);
     inventory = inventoryMap((await read('AllPet')).pets);
     definitions = new Map(config.tables.PetBreedCfg.data.map(row => [row.petId, row.quality]));
+    if ([...inventory.values()].some(pet => qualities.includes(definitions.get(pet.petId)))) {
+      used = await readPetAssignments(read, config, player, client);
+    }
   }
-  const eligible = new Set();
+  const eligible = new Set(), occupied = new Set();
   for (const [id, item] of inventory) {
     const quality = definitions.get(equipment ? item.equipId : item.petId);
-    if (!qualities.includes(quality) || used.has(id) || !baseLevel(item.level) || item.rerollAttrs?.length) continue;
-    if (equipment) {
-      if (item.refineLv === 0 && !(item.attr ?? []).some(attr => attr.rating > 0)) eligible.add(id);
+    if (!qualities.includes(quality)) continue;
+    if (used.has(id)) {
+      occupied.add(id);
       continue;
     }
-    // 蓝紫橙海兽的 0–5 星由培育随机获得。红色出生为 0 星，升星属于养成。
-    const naturalStar = Number.isInteger(item.star) && item.star >= 0 && item.star <= 5 && (quality !== 'RED' || item.star === 0);
-    if (naturalStar && item.grade === 0 && !item.extAttrs?.length && !item.extAttrs2?.length
-      && !item.profFeed?.some(feed => feed.attrFeed?.some(attr => attr.times > 0))) eligible.add(id);
+    if (equipment && (!baseLevel(item.level) || item.rerollAttrs?.length || item.refineLv !== 0 ||
+      (item.attr ?? []).some(attr => attr.rating > 0))) continue;
+    eligible.add(id);
   }
-  return { inventory, eligible };
+  return { inventory, eligible, occupied };
 }
 
 // 兼容原领取后入口，也可由每轮检查调用。重试始终限定原来的精确 UID。
-export async function cleanupAfterClaim(client, config, settings, ledger, kind, enabled) {
+export async function cleanupAfterClaim(client, config, settings, ledger, kind, enabled, player) {
   const equipment = kind === 'forge';
   const prefix = equipment ? 'equip-dispose:' : 'pet-release:';
   const group = settings[kind];
@@ -97,6 +135,7 @@ export async function cleanupAfterClaim(client, config, settings, ledger, kind, 
     if (!active()) throw new AutomationSkip('清理已暂停或账号连接、设置已变化');
     return reply;
   };
+  const scan = () => eligibleItems(read, config, equipment, qualities, player, client);
   let reconciled = 0, protectedCount = 0;
   const reconcile = inventory => {
     for (const [key, record] of Object.entries(ledger.keyRecords())) {
@@ -107,13 +146,18 @@ export async function cleanupAfterClaim(client, config, settings, ledger, kind, 
       if (previousKeys.has(key)) reconciled++;
     }
   };
-  const recoveryNote = () => [reconciled ? `原 UID 已不在库存，核销 ${reconciled} 项旧记录` : '',
-    protectedCount ? `按当前占用、品质或养成状态保留 ${protectedCount} 项，解除旧记录` : ''].filter(Boolean).join('，');
+  const occupiedPets = new Set();
+  const recoveryNote = () => [occupiedPets.size ? `跳过 ${occupiedPets.size} 只已编队或值守的海兽` : '',
+    reconciled ? `原 UID 已不在库存，核销 ${reconciled} 项旧记录` : '',
+    protectedCount ? `按当前${equipment ? '占用、品质或养成状态' : '占用或品质'}保留 ${protectedCount} 项，解除旧记录` : ''].filter(Boolean).join('，');
   activeClients.add(client);
   try {
     if (records.length) reconcile(inventoryMap((await read(inventoryName))[inventoryField]));
-    const before = await eligibleItems(read, config, equipment, qualities);
-    const fresh = await eligibleItems(read, config, equipment, qualities);
+    const before = await scan();
+    const fresh = await scan();
+    if (!equipment) {
+      for (const id of [...before.occupied, ...fresh.occupied]) if (fresh.inventory.has(id)) occupiedPets.add(id);
+    }
     reconcile(fresh.inventory);
     const currentRecords = ledger.keyRecords();
     for (const [key, record] of Object.entries(currentRecords)) {
@@ -125,7 +169,7 @@ export async function cleanupAfterClaim(client, config, settings, ledger, kind, 
       protectedCount++;
     }
     const ids = [...before.eligible].filter(id => fresh.eligible.has(id) && !blocked.has(id));
-    const entries = [];
+    let entries = [];
     try {
       for (const id of ids) {
         const key = prefix + id;
@@ -149,13 +193,48 @@ export async function cleanupAfterClaim(client, config, settings, ledger, kind, 
       for (const entry of entries) if (!entry.reused) ledger.cancel(entry.ticket);
       return null;
     }
-    if (!entries.length) return recoveryNote() ? { label, ok: true, status: 'confirmed', note: recoveryNote() } : null;
+    const noCandidates = () => {
+      if (reconciled || protectedCount) return { label, ok: true, status: 'confirmed', note: recoveryNote() };
+      if (occupiedPets.size) return { label, ok: false, skipped: true, reason: recoveryNote() };
+      return null;
+    };
+    if (!entries.length) return noCandidates();
     const name = equipment ? 'DecomposeEquipRequest' : 'FreePetRequest';
-    const bodyIds = entries.map(entry => automationWireId(entry.id));
     let writePending = true;
     try {
-      if (equipment) await client.request(name, { uid: bodyIds }, 'DecomposeEquipResponse', 8000);
-      else await client.sendWatch(name, { petUid: bodyIds }, { window: 600 });
+      if (equipment) {
+        await client.request(name, { uid: entries.map(entry => automationWireId(entry.id)) }, 'DecomposeEquipResponse', 8000);
+      } else {
+        const beforeSend = () => {
+          if (!active()) throw new AutomationSkip('放生已暂停或账号连接、设置已变化');
+        };
+        while (entries.length) {
+          try {
+            await client.sendWatch(name, { petUid: entries.map(entry => automationWireId(entry.id)) }, { window: 600, beforeSend });
+            break;
+          } catch (error) {
+            if (error.notSent || !error.prompt || error.request !== name) throw error;
+            // 拒绝回包不含 UID。只有读回本批确有新增占用时，才缩小名单重试。
+            const current = await scan().catch(() => null);
+            if (!current || !entries.some(entry => current.occupied.has(entry.id))) throw error;
+            reconcile(current.inventory);
+            for (const entry of entries) {
+              if (current.occupied.has(entry.id)) occupiedPets.add(entry.id);
+              if (current.inventory.has(entry.id) && !current.eligible.has(entry.id)) {
+                ledger.cancel(entry.ticket);
+                if (entry.reused) protectedCount++;
+              }
+            }
+            entries = entries.filter(entry => current.eligible.has(entry.id));
+            for (const entry of entries) {
+              entry.details = { ...entry.details, attempts: entry.details.attempts + 1, lastAttemptAt: Date.now(),
+                reason: '跳过新增占用的海兽后，重试已复核的闲置 UID' };
+              ledger.updateKeyDetails(entry.key, entry.details);
+            }
+          }
+        }
+        if (!entries.length) return noCandidates();
+      }
       writePending = false;
       const remaining = inventoryMap((await read(inventoryName))[inventoryField]);
       const confirmed = entries.filter(entry => !remaining.has(entry.id)).length;

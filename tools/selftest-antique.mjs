@@ -12,7 +12,7 @@ let sequence = 0;
 const ledger = () => createUsageLedger('藏品验证账号', { file: path.join(directory, 'usage-' + (++sequence) + '.json') });
 const player = { playerId: '9007199254740001', worldId: 1001001, level: 40 };
 const read = f => readAntiqueUpgrade(f.client, f.protocol, f.config, player);
-const plan = async (f, s, usage = ledger()) => planAntiqueUpgrade(await read(f), f.config, s, { usage: usage.snapshot(), keys: usage.keyRecords() });
+const plan = async (f, s, usage = ledger()) => planAntiqueUpgrade(await read(f), f.config, s, { keys: usage.keyRecords() });
 const run = (f, s, usage = ledger()) => runAntiqueUpgrade(f.client, f.protocol, f.config, player, { getSettings: () => s, ledger: usage });
 const checks = [];
 const check = async (name, work) => {
@@ -25,7 +25,7 @@ await check('设置默认关闭、导入兼容、总开关独立保存和品质�
   delete old.antique;
   const imported = importAutomationSettings({ format: 'crazywaterword-automation', version: 1, settings: old });
   assert.equal(imported.antique.enabled, false);
-  assert.equal(imported.antique.dailyGoldLimit, 20000);
+  assert(!Object.hasOwn(imported.antique, 'dailyGoldLimit'));
   const idle = antiqueSettings(); idle.antique.enabled = true; idle.antique.activate = false; idle.antique.star = false; idle.antique.master = false; idle.antique.suit = false;
   const saved = validateSettings(idle), f = antiqueFixture();
   assert.equal(saved.antique.enabled, true);
@@ -115,17 +115,19 @@ await check('大师等级为0时仍可激活已集齐的套装，但不继续升
   const p = await plan(f, s, u);
   assert.deepEqual(p.actions.map(row => row.kind), ['antiqueSuit']); assert.equal(p.actions[0].targetLevel, 1);
 });
-await check('红色套装需至少两件已激活，套装日金币预算限制后续等级', async () => {
+await check('红色套装需至少两件已激活，后续升级按实际金币余额执行', async () => {
   const f = antiqueFixture(), s = antiqueSettings(), u = ledger();
   Object.assign(s.antique, { activate: false, star: false, master: false, suit: true, suitQualities: ['RED'] });
   f.state.antiques = [{ id: '红藏1', star: 0 }]; f.client.setItem('红藏品经验', 100);
   let p = await plan(f, s, u); assert.equal(p.actions.length, 0); assert.match(p.notes.join(' '), /需要 2 件/);
   f.state.antiques.push({ id: '红藏2', star: 0 });
   p = await plan(f, s, u); assert.equal(p.actions[0]?.targetLevel, 1);
-  f.state.suits = [{ id: 4001, level: 1 }]; s.antique.dailyGoldLimit = 99;
-  p = await plan(f, s, u); assert.equal(p.actions.length, 0); assert.match(p.notes.join(' '), /日预算/);
-  s.antique.dailyGoldLimit = 0; p = await plan(f, s, u); assert.equal(p.actions[0]?.targetLevel, 2);
-  f.state.suits[0].level = 2;
+  f.state.suits = [{ id: 4001, level: 1 }]; f.state.gold = 99;
+  p = await plan(f, s, u); assert.equal(p.actions.length, 0); assert.match(p.notes.join(' '), /金币不足/);
+  Object.assign(s.antique, { goldReserve: 100, dailyGoldLimit: 99 });
+  f.state.gold = 100;
+  assert.equal((await run(f, s, u)).results[0]?.status, 'confirmed');
+  assert.equal(f.state.suits[0].level, 2); assert.equal(f.state.gold, 0);
   p = await plan(f, s, u); assert.equal(p.actions.length, 0);
 });
 

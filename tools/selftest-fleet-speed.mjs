@@ -10,7 +10,6 @@ import { readFleetSpeed,planFleetSpeed,runFleetSpeed,watchFleetSpeed } from '../
 import { fleetSpeedTarget, previewManualFleetSpeed, runManualFleetSpeed } from '../src/manual-fleet-speed.mjs';
 import { repairDiamondCost } from '../src/fleet-speed-evidence.mjs';
 import { watchFleetRepairPricing } from '../src/fleet-repair-pricing.mjs';
-import { watchSiliconMining } from '../src/silicon-mining.mjs';
 import { settleFleetSnapshot } from '../src/fleet-settlement.mjs';
 import { sendRepairAndConfirm, fleetRepairConfirmed } from '../src/fleet-repair-confirmation.mjs';
 import { runLoop } from '../src/loop.mjs';
@@ -290,17 +289,17 @@ await test('两队预览及真实扣费均按累计阶梯推进，同步推送�
     assert.equal(watchFleetSpeed(f.client).minutes(),61,'服务端追上后不重复计本地分钟');
   }
 });
-await test('城战与硅矿共用维修计费，明确拒绝回滚本地分钟但不回滚服务端值',async()=>{
+await test('城战维修加速明确拒绝回滚本地分钟但不回滚服务端值',async()=>{
   for(const mode of ['reject','notSent']){
-    const f=fixture(),silicon=watchSiliconMining(f.client);watchFleetSpeed(f.client);f.repair();
+    const f=fixture(),speed=watchFleetSpeed(f.client);f.repair();
     f.client.emit('message',{name:'SCSpeedUp',body:{data:[{type:4,minutes:59}]}});
-    f.mode=mode;await f.run();assert.equal(silicon.repairMinutes(),59);assert.equal(watchFleetSpeed(f.client).minutes(),59);
+    f.mode=mode;await f.run();assert.equal(speed.minutes(),59);
     f.beforeSend=()=>f.client.emit('message',{name:'SCSpeedUp',body:{data:[{type:4,minutes:62}]}});
-    await f.run();assert.equal(silicon.repairMinutes(),62,'拒绝不能撤销已知服务端累计量');
+    await f.run();assert.equal(speed.minutes(),62,'拒绝不能撤销已知服务端累计量');
   }
-  const f=fixture(),silicon=watchSiliconMining(f.client);watchFleetSpeed(f.client);f.repair();
+  const f=fixture(),speed=watchFleetSpeed(f.client);f.repair();
   f.client.emit('message',{name:'SCSpeedUp',body:{data:[{type:4,minutes:59}]}});
-  await f.run();assert.equal(silicon.repairMinutes(),61);assert.equal(watchFleetSpeed(f.client).minutes(),61);
+  await f.run();assert.equal(speed.minutes(),61);
 });
 await test('未知维修跨重连、跨日仍用最高档，其他区服未知记录不污染报价',async()=>{
   const f=fixture();f.repair();watchFleetSpeed(f.client);f.mode='unknown';

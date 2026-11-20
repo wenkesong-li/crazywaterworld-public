@@ -143,7 +143,7 @@ function fixture() {
     loopSettingsRevision: 1,
     merchantActivityFields, guildShipActivityFields,
     configButton: (text, onclick) => Object.assign(element('button', '', text), { onclick }),
-    configPlacePanel() {},
+    configOpenSearchPanel() {},
     $: node, el: element,
     clear: item => { item.textContent = ''; return item; },
     component: name => element(name === 'ui-number' ? 'input' : 'button'),
@@ -479,7 +479,7 @@ await test('后台活动更新保留商船多选的展开、搜索、筛选结�
   const pending = f.api.refresh(); await flushAsync(); f.api.selectShip();
   const picker = f.shipInput('guildShip.disabledMaterials');
   picker.open = true; picker.ontoggle();
-  const search = picker.querySelector('.config-input'); search.value = '木板'; search.oninput();
+  const search = picker.querySelector('.config-input'); search.focus(); search.value = '木板'; search.oninput();
   const filtered = picker.querySelector('.config-option-list').textContent;
   live.resolve(f.activities); await pending;
   assert.equal(f.shipInput('guildShip.disabledMaterials'), picker);

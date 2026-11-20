@@ -177,6 +177,21 @@ await test('海兽消费备料遵守世界循环、模块、动作和来源开�
   }
 });
 
+await test('海兽投喂满后，排产快照不再为旧进阶材料备货', () => {
+  const { raw, settings } = fixture();
+  settings.factory.demandPriority = ['petAdvance'];
+  settings.pet.enabled = settings.pet.advance = true;
+  const uid = { low: 1, high: 2097152 };
+  raw.water.building[2].petServe = { petUid: uid, upgradeRequirements: [{ id: '面包', num: 1 }] };
+  const attrFeed = [{ times: 0 }];
+  raw.pets = { pets: [{ uid, grade: 0, profFeed: [{ attrFeed }] }] };
+  const cfg = { tables: { ...config.tables, PetAdvancedCfg: table([{ grade: 1 }]), PetFeedAttrCfg: table([{ level: 0, attrCounts: [1] }]) } };
+  const demand = () => buildProductionSnapshot(raw, cfg, settings).orders.filter(row => row.source === 'petAdvance');
+  assert.equal(demand().length, 1);
+  attrFeed[0].times = 1;
+  assert.equal(demand().length, 0);
+});
+
 await test('博物馆消费备料遵守世界循环、运行、探宝、升级和来源开关', () => {
   const museumConfig = { tables: { ...config.tables,
     MuseumExpeditionStageCfg: table([{ stageId: 1, areaLevelReq: [] }]),
@@ -568,7 +583,25 @@ await test('跨请求期间发生游戏写入或相关推送时拒绝混合快�
     assert(!client.calls.includes('AllResourceRequest'));
     assert.equal(client.listenerCount('frame'), before.frame);
     assert.equal(client.listenerCount('message'), before.message);
+    assert.equal(client.calls.filter(name => name === 'OnWaterRequest').length, event[0] === 'frame' ? 1 : 3);
   }
+});
+
+await test('重读间隔内连接变化即停止，不跨连接继续旧计划', async () => {
+  const { raw, settings } = fixture();
+  const { client, protocol } = fakeClient(raw);
+  const original = client.request;
+  client.request = async function(name) {
+    const result = await original.call(this, name);
+    if (name === 'AllItemRequest') {
+      this.emit('message', { name: 'SCUpdateWaterBuilding', body: {} });
+      setImmediate(() => { this.connectionEpoch++; });
+    }
+    return result;
+  };
+  await assert.rejects(readProductionSnapshot(client, protocol, config, raw.player, settings),
+    error => error.code === 'PRODUCTION_SNAPSHOT_CHANGED' && !error.updatePush);
+  assert.deepEqual(client.calls, ['OnWaterRequest', 'AllItemRequest']);
 });
 
 await test('心跳、ACK和只读响应允许完成快照且成功后移除监听', async () => {

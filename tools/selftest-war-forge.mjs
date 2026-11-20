@@ -7,6 +7,7 @@ import { warForgeFixture, warForgeSettings } from './fixtures/war-forge.mjs';
 import { defaultSettings, validateSettings, importAutomationSettings, createUsageLedger, saveAutomationSettings, loadAutomationSettings } from '../src/automation-settings.mjs';
 import { cityPetrolCost, readCityWar, planCityWar, runCityWar } from '../src/city-war.mjs';
 import { readEquipmentForge, planEquipmentForge, releaseStaleEquipmentForge, runEquipmentForge } from '../src/equipment-forge.mjs';
+import { beginOrderMaterialSpend, pendingOrderMaterialSpends } from '../src/order-reservations.mjs';
 import { readTreasureLoot, planTreasureLoot, runTreasureLoot } from '../src/treasure-loot.mjs';
 import { runLoop } from '../src/loop.mjs';
 import { exactAutomationId } from '../src/automation-policy.mjs';
@@ -24,7 +25,7 @@ const warRead = (f, s) => readCityWar(f.client, f.protocol, f.config, f.player, 
 const warPlan = async (f, s, usage = ledger()) => planCityWar(await warRead(f, s), s, { keys: usage.keyRecords(), pendingPetrol: (usage.pendingCounters().cityWarPetrol ?? 0) + (usage.pendingCounters().treasurePetrol ?? 0) });
 const warRun = (f, s, usage = ledger(), options = {}) => runCityWar(f.client, f.protocol, f.config, f.player, { getSettings: () => s, ledger: usage, mapLoader: f.mapLoader, ...options });
 const forgeRead = f => readEquipmentForge(f.client, f.protocol, f.config, f.player);
-const forgePlan = async (f, s, usage = ledger()) => planEquipmentForge(await forgeRead(f), f.config, s, { usage: usage.snapshot(), keys: usage.keyRecords() });
+const forgePlan = async (f, s, usage = ledger()) => planEquipmentForge(await forgeRead(f), f.config, s, { keys: usage.keyRecords() });
 const forgeRun = (f, s, usage = ledger(), options = {}) => runEquipmentForge(f.client, f.protocol, f.config, f.player, { getSettings: () => s, ledger: usage, ...options });
 
 await check('场景2独立读取主城和费用，不回退场景1或通用表', async () => {
@@ -101,7 +102,6 @@ await check('默认关闭、旧设置和版本1导入兼容且不写旧文件', 
   assert.equal(imported.cityWar.enabled, false); assert.equal(imported.forge.enabled, false);
   const bad = warForgeSettings(); bad.cityWar.fleetIds = []; assert.throws(() => validateSettings(bad), /舰队/);
   const badForge = warForgeSettings(); badForge.forge.recipeIds = []; assert.throws(() => validateSettings(badForge), /配方/);
-  badForge.forge.recipeIds = ['1001']; badForge.forge.dailyLimit = 0; assert.throws(() => validateSettings(badForge), /1–1000/);
 });
 await check('关闭两功能不产生任何游戏请求', async () => {
   const f = warForgeFixture(), s = defaultSettings(); await warRun(f, s); await forgeRun(f, s);
@@ -141,6 +141,32 @@ await check('真实登录协议VIP额度动态读取，未用完不接续，不�
   assert.equal((await warPlan(f, s)).actions.length, 2);
   delete f.player.vip;
   assert.equal((await warPlan(f, s)).actions.length, 0);
+});
+await check('未解锁原生委任时各次数设置均直接派遣所选舰队', async () => {
+  for (const [vipLevel, effects] of [[0, null], [1, []], [1, [['每日城战委任次数', 0]]]]) {
+    for (const mode of [-1, 0, 2]) {
+      const f = warForgeFixture(), s = warForgeSettings();
+      f.player.vip.vipLevel = vipLevel;
+      if (effects) f.config.tables.VipLevelCfg.data.find(row => row.level === vipLevel).effects = effects;
+      Object.assign(s.cityWar, { fleetIds: ['1远征船'], nativeCommissionLimit: mode });
+      delete f.state.fleets[0].autoFight;
+      const result = await warRun(f, s);
+      assert.equal(result.nativeLimit, 0);
+      assert.deepEqual(f.client.writes, [{ name: 'MoveFleetsToCityRequest', body: { buildingId: ['1远征船'], cityId: 2 } }]);
+      assert.equal(result.results[0]?.status, 'confirmed');
+    }
+  }
+});
+await check('VIP 等级没有匹配配置时继续等待额度确认', async () => {
+  const f = warForgeFixture(), s = warForgeSettings();
+  f.player.vip.vipLevel = 2;
+  for (const mode of [-1, 2]) {
+    s.cityWar.nativeCommissionLimit = mode;
+    const result = await warRun(f, s);
+    assert.equal(result.nativeLimit, null);
+    assert.match(result.fleets[0].reason, /无法确认账号委任额度/);
+    assert.deepEqual(f.client.writes, []);
+  }
 });
 await check('原生委任设为0时关闭所选舰队开关再立即接续', async () => {
   const f=warForgeFixture(),s=warForgeSettings(),u=ledger();s.cityWar.fleetIds=['1远征船'];s.cityWar.nativeCommissionLimit=0;
@@ -274,14 +300,40 @@ await check('锻造真实协议材料金币与配方赛季校验', async () => {
   assert.equal(plan.actions.length,1);assert.deepEqual(plan.actions[0].costs,[{id:'GOLD',num:2000},{id:'蓝武器材料',num:40}]);
   s.forge.recipeIds=['1002'];assert.equal((await forgePlan(f,s)).actions.length,0);
   s.forge.recipeIds=['1001'];f.state.gold=1999;assert.equal((await forgePlan(f,s)).actions.length,0);
-  f.state.gold=100000;s.forge.materialReserve=370;assert.equal((await forgePlan(f,s)).actions.length,0);
+  f.state.gold=2000;f.state.materials.蓝武器材料=40;assert.equal((await forgePlan(f,s)).actions.length,1);
 });
-await check('万能材料仅补不足，不能绕过普通材料保留量', async () => {
+await check('普通材料用尽后，按缺口和万能材料保留量补足', async () => {
   const f=warForgeFixture(),s=warForgeSettings();f.state.materials.蓝武器材料=30;
   assert.equal((await forgePlan(f,s)).actions.length,0);s.forge.universal=true;
   const plan=await forgePlan(f,s);assert(plan.actions[0].body.universal);assert.deepEqual(plan.actions[0].costs.at(-1),{id:'蓝装材料自选包',num:10});
-  s.forge.materialReserve=1;assert.equal((await forgePlan(f,s)).actions.length,0);
-  s.forge.materialReserve=0;s.forge.universalReserve=95;assert.equal((await forgePlan(f,s)).actions.length,0);
+  s.forge.universalReserve=90;assert.equal((await forgePlan(f,s)).actions.length,1);
+  s.forge.universalReserve=91;assert.equal((await forgePlan(f,s)).actions.length,0);
+});
+await check('喂养粗铁扣款待确认时，装备厂仍可用武器材料开工', async () => {
+  const f = warForgeFixture(), settings = warForgeSettings();
+  f.state.materials.粗铁 = 50;
+  const feed = beginOrderMaterialSpend(f.player, [{ id: '粗铁', have: 50, need: 1 }],
+    '喂养培育队列 1', { operation: { verify: () => false } });
+
+  const result = await forgeRun(f, settings);
+  assert.equal(result.results.find(row => row.step.kind === 'forgeStart')?.status, 'confirmed');
+  assert.deepEqual(f.client.writes.map(row => row.name), ['MakeEquipRequest']);
+  assert.deepEqual(pendingOrderMaterialSpends(f.player), [feed]);
+});
+await check('配方实际消耗的普通或万能材料有待确认扣款时跳过锻造', async () => {
+  for (const id of ['蓝武器材料', '蓝装材料自选包']) {
+    const f = warForgeFixture(), settings = warForgeSettings();
+    f.state.materials.蓝武器材料 = 30;
+    settings.forge.universal = true;
+    beginOrderMaterialSpend(f.player, [{ id, have: f.state.materials[id], need: 1 }],
+      '上次消费', { operation: { verify: () => false } });
+
+    const result = await forgeRun(f, settings);
+    const entry = result.results.find(row => row.step.kind === 'forgeStart');
+    assert.equal(entry?.skipped, true, id);
+    assert.match(entry.error, /上次消费的材料扣款尚未确认/);
+    assert.equal(f.client.writes.length, 0, id);
+  }
 });
 await check('锻造开始确认，制作中不重复，入库后才继续下一件', async () => {
   const f=warForgeFixture(),s=warForgeSettings(),u=ledger();
@@ -292,15 +344,15 @@ await check('锻造开始确认，制作中不重复，入库后才继续下一�
   assert.equal(f.state.equipment.length,2);
   assert.equal(u.snapshot().counters.forgeStarts,2);assert.equal(u.snapshot().counters.forgeGold,4000);
 });
-await check('锻造次数预算、金币预算、原生自动和工厂占用均约束', async () => {
-  const f=warForgeFixture(),s=warForgeSettings(),u=ledger();s.forge.dailyLimit=1;
+await check('旧锻造限制不阻止续产，原生自动和工厂状态仍生效', async () => {
+  const f=warForgeFixture(),s=warForgeSettings(),u=ledger();
+  Object.assign(s.forge, { dailyLimit: 1, dailyGoldLimit: 1, goldReserve: 100000, materialReserve: 400 });
   await forgeRun(f,s,u);f.finishForge();await forgeRun(f,s,u);
-  assert.deepEqual(f.client.writes.map(row=>row.name),['MakeEquipRequest','PickMadeEquipRequest'],'每日下单上限不阻断已完成装备领取');
-  const g=warForgeFixture();s.forge.dailyLimit=5;s.forge.dailyGoldLimit=1999;assert.equal((await forgePlan(g,s)).actions.length,0);
-  s.forge.dailyGoldLimit=100000;g.state.factory.auto=true;assert.equal((await forgePlan(g,s)).actions.length,0);
+  assert.deepEqual(f.client.writes.map(row=>row.name),['MakeEquipRequest','PickMadeEquipRequest','MakeEquipRequest']);
+  const g=warForgeFixture();g.state.factory.auto=true;assert.equal((await forgePlan(g,s)).actions.length,0);
   g.state.factory.auto=false;g.state.factory.level=0;assert.equal((await forgePlan(g,s)).actions.length,0);
 });
-await check('锻造未知结果跨重建不重发，明确拒绝释放预算', async () => {
+await check('锻造未知结果跨重建不重发，明确拒绝撤销用量记录', async () => {
   const file=path.join(directory,'forge-unknown.json');const f=warForgeFixture(),s=warForgeSettings();f.unknown=true;
   await forgeRun(f,s,createUsageLedger('a',{file}));await forgeRun(f,s,createUsageLedger('a',{file}));
   assert.equal(f.client.writes.length,1);assert.equal(createUsageLedger('a',{file}).pendingCounters().forgeGold,2000);
@@ -531,8 +583,8 @@ await check('外部已处理批次接续时暂停阻止发送，恢复后的并�
   assert.equal(usage.snapshot().counters.forgeStarts, 2);
   assert.equal(usage.snapshot().counters.forgeGold, 4000);
 });
-await check('领取前已有完成批次也可收取，金币预算不足仍不阻断免费领取', async () => {
-  const f=warForgeFixture(),s=warForgeSettings(),u=ledger();s.forge.dailyGoldLimit=1;
+await check('领取前已有完成批次也可收取，金币不足仍不阻断免费领取', async () => {
+  const f=warForgeFixture(),s=warForgeSettings(),u=ledger();f.state.gold=1;
   f.state.factory.equipMaking={makeId:1001,finishTime:Math.floor(Date.now()/1000)-5,equipId:'测试武器',star:2};
   const result=await forgeRun(f,s,u);
   assert.equal(result.results[0].status,'confirmed');assert.deepEqual(f.client.writes.map(row=>row.name),['PickMadeEquipRequest']);
@@ -546,7 +598,7 @@ await check('领取未知跨午夜和重建不重发，后续新UID确认后才�
   f.deliverForge();await forgeRun(f,s,u);assert.equal(u.snapshot().uncertain,0);assert.equal(f.client.writes.filter(row=>row.name==='MakeEquipRequest').length,2);
   assert.equal(u.snapshot().counters.forgeStarts,1,'前一天已确认的下单不重计到新一天');
 });
-await check('领取空回包需真实入库证据，明确拒绝不撤销已花的锻造预算', async () => {
+await check('领取空回包需真实入库证据，领取被拒仍保留已确认的锻造用量', async () => {
   const f=warForgeFixture(),s=warForgeSettings(),u=ledger();await forgeRun(f,s,u);f.finishForge();f.omitClaimReply=true;
   assert((await forgeRun(f,s,u)).results.some(row=>row.step.kind==='forgeClaim'&&row.status==='confirmed'));
   const g=warForgeFixture(),v=ledger();await forgeRun(g,s,v);g.finishForge();g.reject=true;
@@ -705,7 +757,7 @@ await check('领取复核期间暂停阻止领取，并发检查只领取一次'
   f.beforeRead=null;await Promise.all([forgeRun(f,s,u),forgeRun(f,s,u)]);
   assert.equal(f.client.writes.filter(row=>row.name==='PickMadeEquipRequest').length,1);
 });
-await check('未知锻造跨午夜保留金币及材料预算，不因日额度重置而重发', async () => {
+await check('未知锻造跨午夜仍保留资源占用并阻止重复下单', async () => {
   let now=Date.UTC(2026,10,3,15,59,59);const file=path.join(directory,'forge-midnight.json');
   const f=warForgeFixture(),s=warForgeSettings();f.unknown=true;
   await forgeRun(f,s,createUsageLedger('a',{file,now:()=>now}));now+=3000;
@@ -749,14 +801,14 @@ await check('锻造随每轮挂机检查，旧独立间隔不跳过短轮次或�
     }
   } finally { Date.now = originalNow; }
 });
-await check('仅开启装备自动锻造即可跨轮领取续产，达到下单上限仍领取完工装备', async () => {
+await check('仅开启装备自动锻造即可跨轮领取续产，金币用完仍领取完工装备', async () => {
   const originalNow = Date.now;
   let clock = Date.UTC(2026, 10, 18, 4);
   Date.now = () => clock;
   try {
     const f = warForgeFixture(), settings = warForgeSettings(), usage = ledger();
     settings.cityWar.enabled = false;
-    settings.forge.dailyLimit = 2;
+    f.state.gold = 4000;
     assert.equal(settings.schedule.equipmentCollect, false);
     assert.equal(settings.schedule.equipmentCraft, false);
     const rounds = [];
@@ -774,7 +826,7 @@ await check('仅开启装备自动锻造即可跨轮领取续产，达到下单�
     assert(f.client.writes.filter(row => row.name === 'MakeEquipRequest').every(row =>
       row.body.buildingId === '1装备厂' && row.body.makeId === 1001));
     assert.equal(f.state.equipment.length, 3, '两件完工装备均回读确认入库');
-    assert.equal(f.state.factory.equipMaking, null, '达到下单次数上限后仍可收取最后一件');
+    assert.equal(f.state.factory.equipMaking, null, '金币用完后仍可收取最后一件');
     assert.equal(usage.snapshot().counters.forgeStarts, 2);
     assert.equal(usage.snapshot().counters.forgeGold, 4000);
   } finally { Date.now = originalNow; }
@@ -806,7 +858,8 @@ await check('城战窗口内无有效目标不阻断巨轮，跨入有效窗口�
   const g=warForgeFixture();g.state.war.startTime=Math.floor(Date.now()/1000)+5;let mapReads=0;
   g.beforeRead=name=>{if(name==='WorldInfoRequest'&&++mapReads===2)g.client.serverClockOffsetMs=10000;};
   await runLoop(g.client,g.protocol,{config:g.config,player:g.player,rounds:1,allowMutate:true,getSettings:()=>s,usageLedger:ledger(),isEnabled:()=>false});
-  assert.equal(g.client.writes.length,0,'读取期间跨入有效城战窗口仍不能把保留舰队派往巨轮');
+  assert.deepEqual(g.client.writes.map(row => row.name), ['MoveFleetsToCityRequest'],
+    '读取期间开战时应保留舰队，并在主轮检查点派往城战目标');
 });
 
 fs.writeFileSync(path.join(directory,'accounts.json'),JSON.stringify({version:1,activeId:'a',accounts:['a','b'].map(id=>({id,label:'城战锻造模拟'+id,url:'ws://127.0.0.1:1',login:{},automation:{enabled:false,paused:true}}))}));
@@ -880,10 +933,10 @@ await check('装备自动领取和续产可分别关闭，只领取时无需配�
   await forgeRun(g, second);
   assert.equal(g.client.writes.length, 0, '关闭领取时保留已完成批次，不能跳过领取继续制作');
 });
-await check('原生自动锻造只切换游戏开关，禁用工具领取制作分解及预算', async () => {
+await check('原生自动锻造只切换游戏开关，工具领取、制作与分解暂停', async () => {
   const f = warForgeFixture(), settings = warForgeSettings(), usage = ledger();
   Object.assign(settings.forge, { nativeAuto: true, recipeIds: [], decompose: true, decomposeQualities: ['BLUE'],
-    goldReserve: 999999, materialReserve: 999999, dailyLimit: 1, dailyGoldLimit: 1 });
+    universalReserve: 999999 });
   f.state.monthCards = [{ type: f.protocol.MonthCardType.MONTH_CARD_SENIOR, endTime: -1 }];
   f.state.factory.equipMaking = { makeId: 1001, finishTime: Math.floor(Date.now() / 1000) - 10, equipId: '测试武器', star: 2 };
   assert.doesNotThrow(() => validateSettings(settings), '原生模式无需配方');

@@ -73,6 +73,54 @@ try {
     await page.locator('#config-group-' + id).waitFor();
   };
   await page.goto(base); await openConfig();
+  {
+    const history = page.locator('#config-history-dialog');
+    const action = name => history.getByRole('button', { name, exact: true });
+    const preview = async name => {
+      await page.locator('#config-history-open').click();
+      await history.locator('.history-record').filter({ hasText: name }).getByRole('button').click();
+    };
+    await page.locator('#config-history-save').click();
+    await history.getByLabel('配置名称').fill('日常方案');
+    await action('保存').click();
+    await history.getByText('快照已保存', { exact: true }).waitFor();
+    await action('关闭').click();
+    await group('factory');
+    const stock = page.locator('#config-field-factory-keepStock');
+    await stock.fill('332'); await saved();
+    await stock.fill('');
+    await preview('日常方案');
+    assert.match(await history.locator('.history-differences').innerText(), /备货水位[\s\S]*当前：未设置[\s\S]*恢复后：321/);
+    await action('继续恢复').click();
+    await history.getByLabel('草稿名称').fill('待补水位');
+    await action('保存草稿并恢复').click(); await saved();
+    assert.equal(loadAutomationSettings('config-a').settings.factory.keepStock, 321);
+
+    await preview('待补水位');
+    await action('取回并编辑').click(); await action('直接取回').click();
+    await page.locator('#config-state').filter({ hasText: '请修正配置' }).waitFor();
+    assert.equal(await stock.inputValue(), '');
+    assert.equal(await stock.getAttribute('aria-invalid'), 'true');
+    assert.equal(loadAutomationSettings('config-a').settings.factory.keepStock, 321);
+    await stock.fill('333'); await saved();
+    assert.equal(loadAutomationSettings('config-a').settings.factory.keepStock, 333);
+
+    const list = async account => (await (await fetch(base + '/api/settings/history?account=' + account)).json()).entries;
+    const entries = await list('config-a');
+    assert.deepEqual(entries.map(row => [row.name, row.draft]), [['待补水位', true], ['日常方案', false]]);
+    assert.deepEqual(await list('config-b'), []);
+    assert.equal((await fetch(base + '/api/settings/history?account=config-b&id=' + entries[0].id)).ok, false);
+    await preview('日常方案');
+    await action('继续恢复').click();
+    const newer = loadAutomationSettings('config-a');
+    newer.settings.factory.keepStock = 334;
+    saveAutomationSettings('config-a', newer.settings, { revision: newer.revision });
+    await action('直接恢复').click();
+    await page.locator('#config-state').filter({ hasText: '配置有冲突' }).waitFor();
+    assert.equal(loadAutomationSettings('config-a').settings.factory.keepStock, 334);
+    await page.reload(); await openConfig();
+    console.log('通过：命名快照、差异、跨账号隔离、草稿取回修正和恢复版本冲突');
+  }
   assert.equal(await page.locator('#tabs [data-tab=idle], #tab-idle').count(), 0);
   assert.equal(await page.locator('#tabs [data-tab=lineups]').count(), 1);
   assert.equal(await page.getByText('前往挂机启停', { exact: true }).count(), 0);
@@ -92,6 +140,15 @@ try {
   assert.equal(await page.locator('#config-root').getByRole('button', { name: /重新载入/ }).count(), 0);
   assert.equal(await page.locator('#config-root').getByText(/上次保存/).count(), 0);
   console.log('通过：30个模块开关各自归位，旧导航与跨页跳转移除');
+
+  await group('radar');
+  assert.equal(await page.locator('[data-config-key="radar.monthCardSweep"]').count(), 0);
+  const radar = page.getByRole('switch', { name: '自动处理情报', exact: true });
+  await radar.click(); await saved();
+  assert.equal(loadAutomationSettings('config-a').settings.radar.enabled, true);
+  await page.reload(); await openConfig(); await group('radar');
+  assert(await radar.isChecked());
+  console.log('通过：自动处理情报统一控制普通派遣和月卡扫荡');
 
   await group('resourceFields');
   const fieldConfig = page.locator('#config-group-resourceFields');
@@ -135,9 +192,28 @@ try {
   await bossReward.click(); await saved();
   assert.equal(loadAutomationSettings('config-a').settings.schedule.worldBossRewards, false);
   assert(!Object.hasOwn(loadAutomationSettings('config-a').settings.schedule, 'worldBossDamage'));
-  await group('daily-challenges');
-  assert.deepEqual(await page.locator('#config-group-daily-challenges [data-config-key]').evaluateAll(nodes => nodes.map(node => node.dataset.configKey)),
-    ['schedule.leagueCollect', 'schedule.leaguePassRewards']);
+  await group('arena');
+  const arenaLimit = page.locator('#config-field-arena-dailyBattleLimit');
+  await arenaLimit.fill('2'); await saved();
+  const arenaRatio = page.locator('#config-field-arena-maxPowerRatio');
+  await arenaRatio.fill('70'); await saved();
+  await group('league');
+  const leagueLimit = page.locator('#config-field-league-dailyBattleLimit');
+  await leagueLimit.fill('0'); await saved();
+  await page.locator('#config-field-league-claimTask').click(); await saved();
+  const leagueRatio = page.locator('#config-field-league-maxPowerRatio');
+  await leagueRatio.fill('115'); await saved();
+  await page.locator('#config-field-schedule-leagueChallenge').click(); await saved();
+  await page.reload(); await openConfig(); await group('league');
+  assert.equal(await leagueLimit.inputValue(), '0');
+  assert.equal(await page.locator('#config-field-league-claimTask').getAttribute('aria-checked'), 'true');
+  assert.equal(await leagueRatio.inputValue(), '115');
+  assert.equal(await page.locator('#config-field-schedule-leagueChallenge').getAttribute('aria-checked'), 'true');
+  assert.equal(await page.locator('#config-field-schedule-leagueCollect').getAttribute('aria-checked'), 'false');
+  await group('arena');
+  assert.equal(await arenaLimit.inputValue(), '2');
+  assert.equal(await arenaRatio.inputValue(), '70');
+  assert.equal(await page.locator('[data-config-key="schedule.arena"]').count(), 1);
   console.log('通过：世界Boss只有一个领奖入口，自动保存及刷新保留选择，首战派遣保持独立');
 
   await group('worldBoss');

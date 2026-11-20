@@ -14,6 +14,7 @@ const { GameClient } = await import('../src/client.mjs');
 const { saveStore, loadStore } = await import('../src/accounts.mjs');
 const { createConsole } = await import('../src/server.mjs');
 const { automationTasks } = await import('../src/automation.mjs');
+const { createSettingsHistory } = await import('../src/settings-history.mjs');
 const { settingsFromNative, saveAutomationSettings, loadAutomationSettings } = await import('../src/automation-settings.mjs');
 const tasks = Object.fromEntries(automationTasks.map(task => [task.key, task.key === 'mail']));
 const connected = new Set();
@@ -58,6 +59,28 @@ async function finished(account) {
 }
 await open();
 try {
+  await test('历史记录按账号区分大小写，快照与草稿共用最近 50 条，重建后仍可取回', async () => {
+    const store = createSettingsHistory(directory);
+    const original = loadAutomationSettings('detailed');
+    const settings = structuredClone(original.settings);
+    const first = store.save('UserA', '最早', settings);
+    const other = store.save('usera', '另一账号', settings);
+    settings.factory.keepStock = null;
+    assert.throws(() => store.save('UserA', '不完整快照', settings));
+    for (let index = 1; index <= 50; index++) store.save('UserA', '草稿' + index, settings, { draft: true });
+    const history = createSettingsHistory(directory);
+    const entries = history.list('UserA');
+    assert.equal(entries.length, 50);
+    assert.equal(entries[0].name, '草稿50');
+    assert.equal(entries.at(-1).name, '草稿1');
+    assert.throws(() => history.preview('UserA', first.id));
+    assert.throws(() => history.preview('UserA', other.id));
+    assert.equal(history.list('usera').length, 1);
+    const draft = history.preview('UserA', entries[0].id);
+    assert.equal(draft.settings.factory.keepStock, null);
+    assert.ok(draft.errors['factory.keepStock']);
+    assert.deepEqual(loadAutomationSettings('detailed'), original);
+  });
   await test('挂机页启动参数同步详细配置，其他参数与其他账号保持不变', async () => {
     const before = loadAutomationSettings('detailed');
     await api('loop/start', { rounds: 1, everySeconds: 17 });

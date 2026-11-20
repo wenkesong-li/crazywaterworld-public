@@ -107,28 +107,35 @@ export async function challengeTrial(client, config, level, raidId, expectedStag
   });
 }
 
-export async function sweepTrials(client, config, level, enabled, log, scheduler) {
+export async function sweepTrials(client, config, level, enabled, log, scheduler, onWait = () => {}) {
   const prices = config?.tables.TrialRaidBuySweepCfg?.data ?? [];
   for (const raid of config?.tables.TrialRaidCfg?.data ?? []) {
     const key = 'trialSweep:' + raid.raidId;
     if (scheduler && !scheduler.due(key)) continue;
-    const stages = config.tables.TrialRaidStageCfg.data.filter(row => row.raidId === raid.raidId);
-    if (!enabled() || !stages.some(row => row.openLevel <= level)) continue;
+    const stages = (config.tables.TrialRaidStageCfg?.data ?? []).filter(row => row.raidId === raid.raidId);
+    if (!enabled()) continue;
+    const waiting = reason => onWait({ title: raid.title + '免费扫荡', skipped: true, reason }, raid.raidId);
+    if (!stages.some(row => row.openLevel <= level)) {
+      waiting(stages.length ? '角色 ' + Math.min(...stages.map(row => row.openLevel)) + ' 级开放' : '缺少副本关卡配置');
+      continue;
+    }
     try {
       const midnight = scheduler?.nextDay();
       let state = freeSweepState(await readRaid(client, raid.raidId), stages, level, prices);
+      if (!state.left) waiting(!state.passed ? '需先通关该副本第一关' : !state.sweepable ? '尚未达到已通关关卡的扫荡等级'
+        : !prices.length ? '缺少免费扫荡档位配置' : '当前没有可用的免费扫荡');
       while (enabled() && state.left > 0 && (!scheduler || scheduler.now() < midnight)) {
         const next = state.used + 1;
         await client.sendWatch('TrialRaidBuySweepRequest', { raidId: raid.raidId, useAdvCard: false });
         state = freeSweepState(await readRaid(client, raid.raidId), stages, level, prices);
         if (state.used < next) throw new Error('服务端未确认扫荡次数，本轮停止');
-        log({ title: raid.title + '已免费扫荡', ok: true });
+        log({ title: raid.title + '已免费扫荡', note: '已确认免费扫荡，今日普通扫荡累计 ' + state.used + ' 次', ok: true }, raid.raidId);
       }
       if (scheduler && state.sweepable && state.left === 0 && prices.length && scheduler.now() < midnight) {
         scheduler.defer(key, midnight);
       }
     } catch (error) {
-      log({ title: raid.title + '免费扫荡', ok: false, error: error.message });
+      log({ title: raid.title + '免费扫荡', ok: false, error: error.message }, raid.raidId);
     }
   }
 }

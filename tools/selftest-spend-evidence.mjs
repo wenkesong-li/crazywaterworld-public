@@ -63,6 +63,18 @@ await test('工厂加速前后缺少productId，时间缩短不能确认未知�
     '同一个完整任务的完成时间缩短可以确认加速');
 });
 
+await test('整格加速提前完工时按目标和待收数量核对，自然完工与其他格的成品不算', async()=>{
+  const step = { request: 'SpeedUpFactoryProduceRequest', body: { buildingId: 'factory', index: 0 } };
+  const now = Math.floor(Date.now() / 1000);
+  const active = { productId: 'fish', finishTime: now + 1800 };
+  const other = { idx: 1, productId: 'fish', finishTime: now - 1 };
+  const water = (queue, num) => ({ building: [{ buildingId: 'factory', level: 1,
+    factory: { factoryQ: queue, finishedProducts: [{ id: 'fish', num }] } }] });
+  assert.equal(await proves(step, 'OnWater', water([active, other], 1), water([], 3)), true);
+  assert.equal(await proves(step, 'OnWater', water([active, other], 1), water([], 2)), false);
+  assert.equal(await proves(step, 'OnWater', water([{ ...active, finishTime: now - 1 }], 1), water([], 2)), false);
+});
+
 await test('居民槽位缺少有效原需求时，其他订单计数增长不能确认本次交付', async()=>{
   const step={request:'FinishWorkerOrderRequest',body:{index:0}};
   const water=(order,count)=>({building:[],workerOrder:[order],orderOfTheDay:{orderNum:count}});

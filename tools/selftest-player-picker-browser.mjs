@@ -54,11 +54,14 @@ try {
     const search = root.locator('input[type=search]');
     const first = root.locator('input[type=checkbox]').first();
     await first.waitFor();
+    assert.equal(await search.evaluate(node => node === document.activeElement), !mobile, '仅桌面展开时自动聚焦盟友搜索框');
     await activate(root.locator('.config-player-name').first());
     assert.equal(await first.isChecked(), true, '点击盟友名字应勾选');
     assert.equal(await root.locator('details').getAttribute('open'), '', '点击名字后应保持展开');
     await activate(root.locator('.config-player-name').first());
     assert.equal(await first.isChecked(), false, '再次点击名字应取消勾选');
+    await activate(search);
+    assert.equal(await search.evaluate(node => node === document.activeElement), true);
     await search.fill('9007199254740994');
     await activate(root.locator('.config-option small'));
     assert.equal(await first.isChecked(), true, '点击角色 ID 应勾选');

@@ -1,6 +1,6 @@
 // Operation names shared by the server journal and the browser's network errors.
 export const operationLabels = {
-  '/api/world/production-plan': '计算订单联合排产',
+  '/api/world/production-plan': '生成排产计划',
   '/api/world/fleet-speed/preview': '核对舰队加速费用',
   '/api/world/fleet-speed/action': '加速舰队至完成',
   '/api/merchant': '查看海商王实况', '/api/merchant/history': '查看海商王成交记录', '/api/merchant/step': '海商王单步验证',
@@ -71,7 +71,7 @@ export const operationLabels = {
   '/api/fleets/formation': '远征舰队编队',
   '/api/world': '查看海面', '/api/world/run': '执行海面经营', '/api/worlds': '查看海域',
   '/api/world/order/submit': '手动提交居民订单',
-  '/api/worlds/enter': '进入海域', '/api/trials/challenge': '挑战试炼副本',
+  '/api/worlds/enter': '进入海域', '/api/worlds/save-role': '添加区服角色', '/api/trials/challenge': '挑战试炼副本',
   '/api/appointments': '查看英雄职位', '/api/appointments/run': '任命英雄',
   '/api/appointments/settings': '英雄委任设置',
   '/api/loot/run': '一键领取奖励', '/api/dailies': '查看日常', '/api/dailies/run': '执行日常',

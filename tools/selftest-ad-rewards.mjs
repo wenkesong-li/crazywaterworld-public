@@ -36,6 +36,7 @@ const config = {
   materialName: id => id,
   nextAfkRewardLevel: () => null,
   tables: {
+    BuildingCfg: { data: [{ buildingType: '禁用厂' }] },
     AdvChannelCfg: { data: [{ key: '1400', isOpen: true, minAppVersion: '' }] },
     ModuleOpenCfg: { data: [{ moduleId: '广告', playerLevel: 9 }] },
     VipLevelCfg: { data: [{ level: 0, effects: [] }, { level: 3, effects: [['免广告', 1]] }] },
@@ -264,7 +265,7 @@ await test('挂机收益：超过窗口不发送，有权益时无需等待', as
 
 await test('工厂加速：选真实队列中剩余最长项，排除未开工、将完工和禁用工厂', async () => {
   const f = server(), c = context(f, { keys: ['adSpeedUpProduce'], privileged: true });
-  c.settings.factory.disabledTypes = ['9禁用厂'];
+  c.settings.factory.disabledTypes = ['禁用厂'];
   f.state.building = [
     factory('1木工厂', [{ productId: '木板', finishTime: nowS() + 3 * HOUR }, { idx: 1, productId: '木板', finishTime: 0 }]),
     factory('2石工厂', [job(3, 60)]),

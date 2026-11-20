@@ -15,6 +15,7 @@ import { readAllianceRecruitDemand } from './alliance-automation.mjs';
 import { readGuildShips, guildShipDemands } from './guild-ships.mjs';
 import { watchHeroRaidPushes, heroRaidDemands } from './hero-raid-automation.mjs';
 import { museumExploreFactor, selectMuseumHeroes } from './museum-exploration.mjs';
+import { activityProductionEnabled } from './activity-automation.mjs';
 
 const rows = (config, name) => config?.tables?.[name]?.data ?? [];
 const quantities = list => (list ?? []).map(item => Array.isArray(item) ? { id: item[0], num: Number(item[1]) } : { id: item.id, num: Number(item.num) });
@@ -125,6 +126,26 @@ function stageAvailable(stage, snapshot, config, settings) {
   return !requirement.length || (snapshot.museum?.exhibitions ?? []).some(ex => ex.exhibitionId === requirement[0] && ex.level >= requirement[1]);
 }
 
+function petAdvanceCosts(building) {
+  const items = quantities(building.petServe.upgradeRequirements);
+  if (!validCosts(items)) return [];
+  const totals = new Map();
+  for (const { id, num } of items) totals.set(id, (totals.get(id) ?? 0) + num);
+  return [...totals].map(([id, num]) => ({ id, num }));
+}
+
+function petAdvanceProgress(pet, config) {
+  if (!pet) return null;
+  const grade = pet.grade ?? 0;
+  const grades = rows(config, 'PetAdvancedCfg');
+  const next = grades.find(row => row.grade === grade + 1);
+  const required = rows(config, 'PetFeedAttrCfg').filter(row => row.level === grade)
+    .reduce((total, row) => total + (row.attrCounts ?? []).reduce((sum, count) => sum + count, 0), 0);
+  const fed = petAdvanceFeedCount(pet);
+  if ((!next && grade !== Math.max(...grades.map(row => row.grade))) || !(required > 0) || fed === null) return null;
+  return { grade, next, required, fed };
+}
+
 export function baseDemands(snapshot, config, settings) {
   const demands = [];
   const add = (source, requirements) => { const items = quantities(requirements); if (validCosts(items)) demands.push({ source, requirements: items }); };
@@ -149,9 +170,20 @@ export function baseDemands(snapshot, config, settings) {
   }
   for (const event of snapshot.radar?.radarInfo?.events ?? []) if (!(event.startTime > 0)) add('refugee', event.refugee?.requirements);
   if (settings.heroRaid?.enabled && settings.heroRaid.orders) demands.push(...(snapshot.heroRaidDemand ?? []));
-  for (const b of snapshot.world.buildings) {
-    add('petAdvance', b.petServe?.upgradeRequirements);
-    if (petRooms([b], config).length) for (const job of b.petBreed.breedQ ?? []) if (job.finishTime > snapshot.now) add('petFeed', job.feedRequirements);
+  if (activityProductionEnabled(settings, 'petAdvance')) {
+    for (const b of snapshot.world.buildings) {
+      if (!b.petServe?.petUid) continue;
+      const pet = snapshot.pets?.find(row => String(row.uid) === String(b.petServe.petUid));
+      const progress = petAdvanceProgress(pet, config);
+      if (progress && progress.fed >= progress.required) continue;
+      const requirements = petAdvanceCosts(b);
+      if (requirements.length) demands.push({ source: 'petAdvance', requirements, readyToFeed: !!progress });
+    }
+  }
+  if (activityProductionEnabled(settings, 'petFeed')) {
+    for (const room of petRooms(snapshot.world.buildings, config)) {
+      for (const job of room.petBreed.breedQ ?? []) if (job.finishTime > snapshot.now) add('petFeed', job.feedRequirements);
+    }
   }
   if (settings.factory.keepStock > 0) {
     const recipes = rows(config, 'BuildingProduceCfg').filter(r => snapshot.world.factories.some(b => b.type === r.buildType && b.level >= r.unlockLevel && !settings.factory.disabledTypes.includes(b.type)));
@@ -422,32 +454,24 @@ export function planBaseAutomation(snapshot, config, settings, usage = {}, { div
 
   function planPetAdvance() {
     if (!settings.pet.enabled || !settings.pet.advance) return;
-    const grades = rows(config, 'PetAdvancedCfg');
-    const maxGrade = Math.max(...grades.map(row => row.grade));
     for (const b of world.buildings.filter(b => b.petServe?.petUid)) {
       const pet = snapshot.pets.find(p => String(p.uid) === String(b.petServe.petUid));
-      if (!pet) continue;
-      const required = rows(config, 'PetFeedAttrCfg').filter(row => row.level === (pet.grade ?? 0)).reduce((sum, row) => sum + (row.attrCounts ?? []).reduce((n, count) => n + count, 0), 0);
-      const fed = petAdvanceFeedCount(pet);
-      const grade = pet.grade ?? 0;
-      const next = grades.find(row => row.grade === grade + 1);
-      if ((!next && grade !== maxGrade) || !(required > 0) || fed === null) continue;
+      const progress = petAdvanceProgress(pet, config);
+      if (!progress) continue;
+      const { grade, next, required, fed } = progress;
       if (fed >= required) {
         if (!next) continue;
         if (pet.level >= next.level) add({ kind: 'petAdvance', setting: 'pet.advance', request: 'PetUpgradeRequest', response: null, body: { buildingId: b.buildingId }, verify: { petUid: String(pet.uid), grade: next.grade }, label: `海兽 ${pet.petId} 进阶至 ${next.grade} 阶` });
         else note('pet.advance', `海兽 ${pet.petId} 进阶需要等级 ${next.level}`);
         continue;
       }
-      const items = quantities(b.petServe.upgradeRequirements);
-      if (!validCosts(items)) continue;
+      const costs = petAdvanceCosts(b);
+      if (!costs.length) continue;
       const label = `海兽 ${pet.petId} 投喂进阶材料`;
-      if (items.some(({ id }) => (resourceIds.has(id) ? world.resourceStockKnown : world.stockKnown) === false)) {
+      if (costs.some(({ id }) => (resourceIds.has(id) ? world.resourceStockKnown : world.stockKnown) === false)) {
         note('pet.advance', `${label}：未能读取完整库存，等待重新检查`);
         continue;
       }
-      const totals = new Map();
-      for (const { id, num } of items) totals.set(id, (totals.get(id) ?? 0) + num);
-      const costs = [...totals].map(([id, num]) => ({ id, num }));
       const missing = costs.filter(item => free(item.id) < item.num);
       if (missing.length) {
         const details = missing.map(({ id, num }) => {
@@ -667,7 +691,7 @@ export async function runBaseAutomation(client, protocol, config, plan, { player
   }
   const pref = getSettings();
   const cleanup = await cleanupAfterClaim(client, config, pref, ledger, 'pet',
-    () => enabled() && client.connected && getSettings() === pref && pref.loop.world && pref.pet.enabled);
+    () => enabled() && client.connected && getSettings() === pref && pref.loop.world && pref.pet.enabled, player);
   if (cleanup) {
     const row = { ...cleanup, step: { kind: 'petRelease', label: cleanup.label } };
     results.push(row);

@@ -5,6 +5,8 @@ import {
 } from './order-reservations.mjs';
 import { merchantActionSeconds, merchantTiming } from './merchant-planner.mjs';
 import { buyMerchantPointers } from './merchant-strategy.mjs';
+import { estimateMerchantRace, merchantCompetitorArrivals } from './merchant-race.mjs';
+import { watchMerchant } from './merchant-monitor.mjs';
 
 const pointer = '海商王加速';
 const param = (config, key) => table(config, 'ActivityTradeCfg').find(row => row.key === key)?.value;
@@ -15,7 +17,8 @@ const stampSettings = ctx => {
   return JSON.stringify([
     settings.autoSpeedUp, settings.speedUpMinProfit, settings.keepPointers, settings.estimateDiscountPercent,
     settings.quoteMaxAgeSeconds, settings.speedUpMode, settings.speedUpMaxPerLeg, full.loop?.everySeconds, ctx.everyMs
-    , settings.dailyPointerLimit, settings.refreshWindowMinutes, settings.autoBuyPointers, settings.pointerDailyDiamondLimit, settings.profitLimit, full.resources
+    , settings.dailyPointerLimit, settings.refreshWindowMinutes, settings.autoBuyPointers, settings.pointerDailyDiamondLimit, settings.profitLimit,
+    settings.minExpectedProfit, settings.liquidationMinutes, settings.maxLossPercent, settings.refreshWaitSeconds, full.resources
   ]);
 };
 const fingerprint = state => ({ coins: state.player?.coins, profit: state.player?.profit,
@@ -71,6 +74,9 @@ export function planMerchantSpeed(config, event, state, radar, stock, settings, 
   const timing = merchantTiming(config, event, time);
   const inRefreshWindow = refreshMode && positive(timing.previousRefreshAt) &&
     time < timing.previousRefreshAt + (settings.refreshWindowMinutes ?? 8) * 60;
+  const arrivals = mode === 'profit' || inRefreshWindow ? merchantCompetitorArrivals(state, options.actor, time,
+    merchantTiming(config, event, cargo.moveEndTime).previousRefreshAt) : [];
+  const rival = arrivals.findLast(eta => eta <= cargo.moveEndTime);
   const discount = settings.estimateDiscountPercent ?? 10;
   const threshold = settings.speedUpMinProfit ?? 1000;
   const keep = settings.keepPointers ?? 0;
@@ -89,8 +95,12 @@ export function planMerchantSpeed(config, event, state, radar, stock, settings, 
   const totalBatches = Array.isArray(state.player?.goods) ? Math.max(1, state.player.goods.length) : null;
   const refreshPossible = mode === 'profit' && knownMarket && positive(nextRefreshAt)
     && cargo.moveEndTime + (totalBatches ?? 1) * actionSeconds >= nextRefreshAt;
-  if (totalBatches !== null && cargo.moveEndTime <= deadline - totalBatches * actionSeconds && !metrics && !refreshPossible && !inRefreshWindow)
+  const competing = rival && totalBatches !== null;
+  if (options.exploration && !competing) return none('寻价途中暂无可争取的同盟采购顺位');
+  if (totalBatches !== null && cargo.moveEndTime <= deadline - totalBatches * actionSeconds && !metrics && !refreshPossible && !competing) {
+    if (arrivals[0] > cargo.moveEndTime) return { kind: 'none', leading: true, reason: '自然到港已领先可见同盟船，保留指针，到港按实价选货' };
     return none('正常到港后仍有逐批成交时间，无需加速');
+  }
   if (deadline - time < actionSeconds) return wait('剩余时间不足以预留一轮 ' + actionSeconds + ' 秒成交，不使用指针');
   const perPointer = Number(param(config, '海商王加速时长')) * 60;
   if (!positive(perPointer) || !positive(fullVoyage)) return wait('指针时长或航程配置未确认');
@@ -105,7 +115,7 @@ export function planMerchantSpeed(config, event, state, radar, stock, settings, 
   const definitions = new Map(table(config, 'TradeGoodsCfg').map(row => [row.goodsId, row]));
   const goods = state.player?.goods;
   if (!ship || !positive(ship.capacity) || !natural(ship.profitMargin) || !Array.isArray(goods)
-    || !goods.length || goods.some(row => !row || typeof row !== 'object')
+    || goods.some(row => !row || typeof row !== 'object')
     || new Set(goods.map(row => row.pid)).size !== goods.length)
     return wait('船舶或持货批次未确认，不使用指针');
   const knownQuotes = new Map(knownMarket?.goods.map(good => [good.goodsId, good.price]) ?? []);
@@ -134,11 +144,11 @@ export function planMerchantSpeed(config, event, state, radar, stock, settings, 
   }
   if (!natural(usedCapacity) || usedCapacity > ship.capacity || !natural(estimatedProfit) || !natural(quotedProfit))
     return wait('持货舱位或利润计算异常，不使用指针');
-  if (!positive(saleCount) && !(refreshPossible && quotedProfit > estimatedProfit))
+  if (!competing && !positive(saleCount) && !(refreshPossible && quotedProfit > estimatedProfit))
     return wait('风险折扣后的目的港估值没有可盈利出售的批次');
   const saleSeconds = saleCount * actionSeconds;
   const normalCanSell = positive(saleCount) && cargo.moveEndTime <= deadline - saleSeconds;
-  if (normalCanSell && !metrics && !refreshPossible && !inRefreshWindow)
+  if (normalCanSell && !metrics && !refreshPossible && !competing)
     return none('正常到港后足够完成可盈利批次出售，无需加速');
   if (deadline - time < Math.max(1, saleCount) * actionSeconds)
     return wait('剩余时间不足以逐批完成估算收益中的出售，不使用指针');
@@ -146,20 +156,8 @@ export function planMerchantSpeed(config, event, state, radar, stock, settings, 
   if (!natural(have)) return wait('商会指针库存未同步');
   const available = Math.min(limit, Math.max(0, have - keep));
   if (!available) return wait('留足保留量或本航程用量上限后的商会指针不足');
-  if (inRefreshWindow) {
-    const useNum = Math.ceil((cargo.moveEndTime - time) / perPointer);
-    if (useNum > available) return wait('当前窗口的指针或日用量不足以到港，等待自然航行');
-    if (estimatedProfit < threshold * useNum) return wait('刷新加速的保守收益未达到每根指针门槛');
-    return { kind: 'speed', useNum, afterEndTime: time, savedSeconds: cargo.moveEndTime - time,
-      estimatedIncrementalProfit: estimatedProfit, accelerationReason: 'refreshWindow', saleCount, saleSeconds,
-      estimatedProfit, have, deadline, evidenceExpiresAt: Math.min(deadline - saleSeconds,
-        timing.previousRefreshAt + (settings.refreshWindowMinutes ?? 8) * 60 - 1),
-      expected: { request: 'TradeSpeedRequest', period: event.period, city: cargo.cityId, destination: cargo.moveToCityId,
-        moveStartTime: cargo.moveStartTime, beforeEndTime: cargo.moveEndTime, afterEndTime: time, useNum,
-        accelerationReason: 'refreshWindow', estimatedIncrementalProfit: estimatedProfit, savedSeconds: cargo.moveEndTime - time },
-      label: '海商王 · 刷新窗口使用指针 ×' + useNum + '，到港后重读实价；折扣估算利润 ' + estimatedProfit };
-  }
   const candidates = [];
+  const estimateRace = competing && estimateMerchantRace(config, event, state, radar, time, settings, options, rival, actionSeconds);
   for (let useNum = 1; useNum <= available; useNum++) {
     const afterEndTime = Math.max(time, cargo.moveEndTime - useNum * perPointer);
     const savedSeconds = cargo.moveEndTime - afterEndTime;
@@ -171,7 +169,14 @@ export function planMerchantSpeed(config, event, state, radar, stock, settings, 
     const candidateSaleCount = captureRefresh ? quotedSaleCount : saleCount;
     const candidateSaleSeconds = candidateSaleCount * actionSeconds;
     const finishAt = afterEndTime + candidateSaleSeconds;
-    if (!positive(candidateSaleCount) || finishAt > deadline) continue;
+    if (finishAt > deadline) continue;
+    const race = estimateRace && estimateRace(afterEndTime);
+    if (race && race.gain >= threshold * useNum) candidates.push({
+      useNum, afterEndTime, savedSeconds, estimatedIncrementalProfit: race.gain, accelerationReason: 'stockRace',
+      saleCount, saleSeconds, estimatedProfit, evidenceExpiresAt: Math.min(deadline, race.expiresAt,
+        inRefreshWindow ? timing.previousRefreshAt + (settings.refreshWindowMinutes ?? 8) * 60 - 1 : Infinity)
+    });
+    if (options.exploration || !positive(candidateSaleCount)) continue;
     const deadlineProfit = !normalCanSell && estimatedProfit > 0 ? estimatedProfit : 0;
     // 只有剩余窗口容得下一次采购、完整航行、出售，历史周转速率才形成额外机会。
     const canRepeat = metrics && deadline - finishAt >= fullVoyage + actionSeconds * 3;
@@ -187,18 +192,20 @@ export function planMerchantSpeed(config, event, state, radar, stock, settings, 
         turnoverProfit > 0 ? metrics.turnoverObservedAt + turnoverMaxAge : deadline,
         refreshProfit > 0 ? Math.min(knownMarket.observedAt + maxAge, nextRefreshAt) : deadline) });
     // 没有周转或刷新证据时，抢救截止只用能完成成交的最少数量。
-    if (!metrics && !refreshPossible || mode === 'deadline') break;
+    if (!metrics && !refreshPossible && !competing || mode === 'deadline') break;
   }
-  if (!candidates.length) return wait('指针不足、成交窗口或收益阈值不满足，不盲目部分加速');
+  if (!candidates.length) return wait(competing ? '当前用量和时间内，缺少抢先采购能达到收益门槛的记录' : '指针不足、成交窗口或收益阈值不满足，不盲目部分加速');
   candidates.sort((a, b) => b.estimatedIncrementalProfit - a.estimatedIncrementalProfit || a.useNum - b.useNum);
   const best = candidates[0], { useNum, savedSeconds, estimatedIncrementalProfit, accelerationReason } = best;
-  const reasonLabel = { deadline: '抢救截止成交', turnover: '近期确认成交速率评估周转', refresh: '抢在刷新前兑现已观察报价' }[accelerationReason];
+  const reasonLabel = { deadline: '抢救截止成交', turnover: '近期确认成交速率评估周转', refresh: '抢在刷新前兑现已观察报价',
+    stockRace: '早于可见同盟船采购，按目的港历史库存估算新货差额' }[accelerationReason];
   return { kind: 'speed', ...best, have, deadline,
     expected: { request: 'TradeSpeedRequest', period: event.period, city: cargo.cityId,
       destination: cargo.moveToCityId, moveStartTime: cargo.moveStartTime,
       beforeEndTime: cargo.moveEndTime, afterEndTime: best.afterEndTime, useNum,
       accelerationReason, estimatedIncrementalProfit, savedSeconds },
-    label: '海商王 · 使用商会指针 ×' + useNum + '，预留 ' + best.saleSeconds + ' 秒完成 ' + best.saleCount + ' 批成交；'
+    label: accelerationReason === 'stockRace' ? '海商王 · 使用商会指针 ×' + useNum + '，' + reasonLabel + ' ' + estimatedIncrementalProfit + '，到港复查实价和库存' :
+      '海商王 · 使用商会指针 ×' + useNum + '，预留 ' + best.saleSeconds + ' 秒完成 ' + best.saleCount + ' 批成交；'
       + reasonLabel + '，提前 ' + savedSeconds + ' 秒，估算增益 ' + estimatedIncrementalProfit + '；'
       + (knownMarket ? '结合到访低价的' : '基准价') + '折扣估算利润 '
       + best.estimatedProfit + '（非目的港实时报价）' };
@@ -232,12 +239,14 @@ export async function runMerchantSpeed(client, config, ctx, event, state) {
   const settings = settingsOf(ctx);
   if (settings.autoSpeedUp !== true || !(state?.cargo?.moveEndTime > clock(client))) return false;
   const initialSettings = stampSettings(ctx);
+  const monitor = watchMerchant(client), fleetRevision = monitor.fleetRevision;
   const actor = JSON.stringify([ctx.player?.playerId, ctx.player?.worldId, ctx.player?.guildId]);
   const allowed = () => ctx.enabled() && client.connected !== false && settingsOf(ctx).autoSpeedUp === true
     && stampSettings(ctx) === initialSettings
     && JSON.stringify([ctx.player?.playerId, ctx.player?.worldId, ctx.player?.guildId]) === actor
     && client.tradeWindow?.period === event.period && client.tradeWindow?.startTime === event.startTime
     && client.tradeWindow?.endTime === event.endTime
+    && monitor.fleetRevision === fleetRevision
     && windowOpen(event, clock(client)) && tradeDeadline(config, event, clock(client)) !== null;
   if (!allowed()) return false;
   const exploratoryLeg = Object.values(ctx.ledger?.keyRecords() ?? {}).some(record => {
@@ -247,30 +256,34 @@ export async function runMerchantSpeed(client, config, ctx, event, state) {
       && expected.city === cargo.cityId && expected.destination === cargo.moveToCityId
       && Math.abs(expected.start - cargo.moveStartTime) <= 2;
   });
-  if (exploratoryLeg) return false;
   // 不需要加速时不查询库存；其余缺失输入会在获取新快照后校验。
   const actionSeconds = () => merchantActionSeconds(fullSettingsOf(ctx), (ctx.everyMs ?? 0) / 1000);
   const metricsOf = () => typeof ctx.getMerchantMetrics === 'function' ? ctx.getMerchantMetrics()
     : typeof ctx.merchantMetrics === 'function' ? ctx.merchantMetrics() : ctx.merchantMetrics;
   const options = () => {
-    const records = Object.values(ctx.ledger?.keyRecords() ?? {}).filter(record => record.confirmed);
+    const all = Object.values(ctx.ledger?.keyRecords() ?? {});
+    const records = all.filter(record => record.confirmed);
     const usedPointers = records.reduce((sum, record) => {
       const e = record.details?.expected, cargo = state.cargo;
       return record.details?.scope === 'merchant:' + event.startTime + ':' + event.period && e?.request === 'TradeSpeedRequest'
         && e.period === event.period && e.city === cargo.cityId && e.destination === cargo.moveToCityId
         && e.moveStartTime === cargo.moveStartTime && positive(e.useNum) ? sum + e.useNum : sum;
     }, 0);
-    return { actionSeconds: actionSeconds(), metrics: metricsOf(), usedPointers,
+    return { actionSeconds: actionSeconds(), metrics: metricsOf(), usedPointers, actor: ctx.player, exploration: exploratoryLeg,
+      marketHistory: records.find(record => record.details?.merchantJournal?.event?.startTime === event.startTime &&
+        record.details.merchantJournal.event.period === event.period)?.details.merchantJournal.snapshots?.map(entry => ({
+          ...entry.market, held: entry.state?.player?.goods, visitStart: entry.state?.cargo?.moveStartTime
+        })),
       dailyUsed: Math.max(ctx.ledger?.snapshot().counters?.merchantPointers ?? 0,
-        Object.values(ctx.ledger?.keyRecords() ?? {}).reduce((sum, record) => {
+        all.reduce((sum, record) => {
           const e = record.details?.expected, at = record.details?.attemptedAt;
           return e?.request === 'TradeSpeedRequest' && positive(at) && dayOf(at) === dayOf(clock(client)) && positive(e.useNum) ? sum + e.useNum : sum;
         }, 0)),
       markets: records.map(record => record.details?.merchantMarket).filter(Boolean) };
   };
   const early = planMerchantSpeed(config, event, state, null, null, settings, clock(client), options());
-  if (early.kind === 'none') return false;
   const skip = reason => { waiting(ctx, reason); return true; };
+  if (early.kind === 'none') return early.leading ? skip(early.reason) : false;
   if (!ctx.ledger) return skip('账号执行记录不可用，不使用指针');
   try {
     await refreshOrderMaterialSpends(client, ctx.player, { enabled: allowed });
@@ -278,11 +291,20 @@ export async function runMerchantSpeed(client, config, ctx, event, state) {
     const stock = await readStock(client);
     if (!allowed()) return skip('加速开关或活动状态已变化');
     const plan = planMerchantSpeed(config, event, state, radar, stock, settings, clock(client), options());
-    if (plan.kind === 'wait' && settings.autoBuyPointers === true) {
-      const desired = planMerchantSpeed(config, event, state, radar, new Map([[pointer, (settings.keepPointers ?? 0) + (settings.speedUpMaxPerLeg ?? 4)]]), settings, clock(client), options());
-      if (desired.kind === 'speed' && (stock.get(pointer) ?? 0) < desired.useNum + (settings.keepPointers ?? 0) &&
-        await buyMerchantPointers(client, config, ctx, event, state, desired.useNum + (settings.keepPointers ?? 0),
-          () => allowed() && clock(client) <= desired.evidenceExpiresAt)) return true;
+    const keep = settings.keepPointers ?? 0, maxStock = keep + (settings.speedUpMaxPerLeg ?? 4);
+    if (settings.autoBuyPointers && fullSettingsOf(ctx).resources?.allowDiamonds && (stock.get(pointer) ?? 0) < maxStock) {
+      const purchasePlan = (info, have, possible, ports = radar) => {
+        const now = clock(client), input = options();
+        const evaluate = count => planMerchantSpeed(config, event, info, ports, new Map([[pointer, count]]), settings, now, input);
+        const desired = evaluate(possible);
+        if (desired.kind !== 'speed' || desired.useNum + keep <= have) return null;
+        const baseline = evaluate(have).estimatedIncrementalProfit ?? 0;
+        const count = desired.useNum + keep - have;
+        return desired.estimatedIncrementalProfit > baseline
+          ? { count, expiresAt: desired.evidenceExpiresAt } : null;
+      };
+      if (purchasePlan(state, stock.get(pointer) ?? 0, maxStock) &&
+        await buyMerchantPointers(client, config, ctx, event, state, purchasePlan, allowed)) return true;
     }
     if (plan.kind !== 'speed') return plan.kind === 'none' ? false : skip(plan.reason);
     const fresh = await read(client, 'TradeInfo');

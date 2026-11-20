@@ -220,7 +220,7 @@ function renderPhonePending(data) {
       if (choice.roleWorldId && String(choice.roleWorldId) !== String(choice.worldId)) {
         info.appendChild(el('p', 'dim', '原区服 ' + (choice.worldName || choice.worldId) + '，合服后位于 ' + phoneRoleWorld(choice)));
       }
-      if (choice.matched) info.appendChild(el('p', 'dim', '已有记录 ' + (choice.existingTitle || choice.nickname) + '，保存会更新角色与区服。切换角色时会停止旧角色的任务和连接。'));
+      if (choice.matched) info.appendChild(el('p', 'dim', '已有记录 ' + (choice.existingTitle || choice.nickname) + '，保存会刷新本角色的资料和登录凭据。'));
       row.append(input, info);
       list.appendChild(row);
     }
@@ -273,7 +273,7 @@ $('phone-roles-retry').onclick = async () => {
 async function phoneLogin(payload) {
   if (phoneBusy) return;
   setPhoneBusy(true);
-  phoneHint('正在验证 APP 账号并读取全部区服角色，多账号可能需要稍等片刻…');
+  phoneHint('');
   const button = $(phoneMode === 'password' ? 'phone-login' : 'phone-sms-login');
   const label = button.textContent;
   button.textContent = '正在读取角色…';
@@ -322,13 +322,13 @@ $('phone-send-code').onclick = () => {
     if (phoneBusy || generation !== phoneGeneration) return;
     setPhoneBusy(true);
     $('phone-send-code').textContent = '正在发送…';
-    phoneHint('正在发送验证码…');
+    phoneHint('');
     try {
       const data = await call('/api/accounts/phone-login/send-code', { method: 'POST', body: JSON.stringify({ confirm: true, phone }) });
       smsCooldowns.set(phone, Date.now() + (Number(data.cooldown) || 60) * 1000);
       clearInterval(smsTimer);
       smsTimer = setInterval(() => {
-        updateSmsButton();
+        if (!phoneBusy) updateSmsButton();
         if ([...smsCooldowns.values()].every(deadline => deadline <= Date.now())) clearInterval(smsTimer);
       }, 1000);
       phoneHint('验证码已发送至 ' + phone.slice(0, 3) + '****' + phone.slice(-4) + '，请输入后点击「验证并读取角色」。');
@@ -433,7 +433,10 @@ $('phone-save').onclick = async () => {
     $('phone-saved-account').textContent = (role.nickname || '未命名角色') + ' · ' + phoneRoleWorld(role);
     let nextStep = '手动开始挂机';
     let nextHint = '账号已保存，尚未开始挂机。可先在「挂机配置」设置任务，再点击账号卡片或页头的「开始挂机」。';
-    if (snapshot.paused || snapshot.loginBlocked) {
+    if (data.account.hasSiblingRoles && snapshot.paused) {
+      nextStep = '切换并托管';
+      nextHint = '角色已添加。配置好本角色的任务后，点击「切换并托管」即可从同账号的其他角色接手。';
+    } else if (snapshot.paused || snapshot.loginBlocked) {
       nextStep = '恢复托管';
       nextHint = '请点击页面顶部的「恢复托管」，连接后核对角色和区服。';
     } else if (snapshot.looping) {

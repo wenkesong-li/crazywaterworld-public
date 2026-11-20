@@ -157,13 +157,13 @@ export function activitiesPage() {
 
 export function manualPage() {
   return renderToStaticMarkup(<div className="grid gap-3">
-    <Panel title="海面" help="打开建筑一览时会读取工厂、农田和居民订单。点击工厂的「查看排产」可查看各生产格的情况。">
-      <div id="world-view" role="status" />
-      <div id="world-factories"></div>
-      <div id="world-orders"></div>
-    </Panel>
-    <Panel title="需求联合排产" help="按用户配置的需求优先级逐级优化齐套时间，上游材料继承对应优先级。共享原料和生产位统一安排，独立设施并行生产。结果显示分层工期、投料顺序、时长依据和阻塞原因。">
-      <div className="bar"><Button id="production-plan-refresh" variant="outline">计算联合排产</Button><span id="production-plan-status" className="dim" role="status">连接后可计算</span></div>
+    <div id="world-view" className="dim" role="status" aria-label="海面" />
+    <div id="world-factories" />
+    <div className="world-orders-panel"><Panel title="居民订单" help="材料已齐时可手动提交，结果见运行日志。「需」为订单需求，「缺」为仍欠的数量，「留」为库存中已预留或被本轮其他操作占用的数量。">
+      <div id="world-orders" />
+    </Panel></div>
+    <Panel title="智能排产规划" help="按需求优先级估算备齐时间。点击带箭头的产物可逐层查看原料，数量按从头制作所需的整批用量计算。计划仅供查看。">
+      <div className="bar"><Button id="production-plan-refresh" variant="outline">生成计划</Button><span id="production-plan-status" className="dim" role="status">连接账号后可生成计划</span></div>
       <div id="production-plan-result" aria-live="polite" />
     </Panel>
   </div>)

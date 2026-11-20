@@ -186,7 +186,6 @@ function LoginSettingsPage({
     savingLock.current = true;
     setSaving(true);
     setFields({});
-    setNotice({ text: "正在保存…", kind: "" });
     try {
       const response = await createAccountApi(accountId).save(
         result.settings,
@@ -226,6 +225,7 @@ function LoginSettingsPage({
         </div>
         <Badge
           id="login-settings-state"
+          hidden={saving}
           className={styles.state}
           variant="outline"
           role="status"
@@ -242,11 +242,6 @@ function LoginSettingsPage({
       </div>
       {!draft ? (
         <div aria-busy={loading}>
-          <p className="dim">
-            {accountId
-              ? "正在读取此账号的登录恢复策略。"
-              : "选择账号后可编辑登录恢复策略。"}
-          </p>
           {accountId && (
             <Button
               id="login-settings-reload"

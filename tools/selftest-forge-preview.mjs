@@ -149,11 +149,11 @@ await test('普通锻造总开关与领取续产都关闭时，军备竞赛仍�
   }
 });
 
-await test('周活动打造仍遵守普通材料及金币预算', async () => {
-  const f = fixture(); f.settings.forge.dailyGoldLimit = 1999;
+await test('周活动打造仍检查可用金币', async () => {
+  const f = fixture(); f.state.gold = 1999;
   const plan = await f.preview();
   assert.equal(plan.actions.length, 0);
-  assert.match(plan.factories[0].reason, /会超过今日锻造金币预算/);
+  assert.match(plan.factories[0].reason, /金币不足/);
 });
 
 await test('关闭周活动或不勾选装备打造时保持普通装备制造', async () => {

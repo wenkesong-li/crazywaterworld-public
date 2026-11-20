@@ -418,6 +418,34 @@ try {
     }
   });
 
+  await test('同账号切换等待旧角色任务退出，重启只恢复接手角色', async () => {
+    const first = account({ autoStart: true });
+    const second = account({ autoStart: false, paused: true });
+    second.row.login.eworldParams.openId = first.id;
+    first.row.login.worldId = 1001;
+    second.row.login.worldId = 1002;
+    let release;
+    first.state.mailGate = new Promise(resolve => { release = resolve; });
+    await launch([first, second]);
+    let switching;
+    try {
+      await waitFor(() => first.state.requests.includes('EmailBoxRequest'), '旧角色正在处理邮件');
+      switching = api(second.id, 'accounts/pause', { paused: false, start: true });
+      await waitFor(() => session(first.id).paused, '切换已暂停旧角色');
+      assert.equal(second.state.logins, 0);
+    } finally { release(); }
+    await switching;
+    await running(second.id);
+    assert.equal(session(first.id).loop.running, false);
+    assert.equal(live.size, 1);
+    await shutdown(); await launch();
+    await running(second.id);
+    assert.equal(session(first.id).paused, true);
+    assert.equal(first.state.logins, 1);
+    assert.equal(second.state.logins, 2);
+    assert.equal(live.size, 1);
+  });
+
   await test('页头开始清除顶号阻塞并报告无任务的启动错误', async () => {
     const blocked = account({ autoStart: false, loginBlocked: true });
     const empty = account({ autoStart: false, tasks: Object.fromEntries(Object.keys(tasks).map(key => [key, false])) });

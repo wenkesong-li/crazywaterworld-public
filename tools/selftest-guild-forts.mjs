@@ -14,6 +14,18 @@ const fixture=()=>guildShipFixture(protocol,dir);
 const read=f=>readGuildForts(f.client,protocol,config,f.options);
 const run=f=>serviceGuildForts(f.client,protocol,config,f.options);
 try{
+ await check('工事冷却保留上次实查原因，不用等待提示覆盖运行状态',async()=>{
+   const {rewardSchedule}=await import('../src/reward-schedule.mjs');
+   const f=fixture(), scheduler=rewardSchedule(f.client), reports=[];
+   f.player.worldId='2000001';
+   f.options.scheduler=scheduler;
+   f.options.report=entry=>{reports.push(entry);scheduler.observe(entry.key,entry.reason);};
+   const first=await run(f);assert.match(first.reason,/赛季/);
+   const reads=f.state.calls.length;
+   assert.equal((await run(f)).reason,first.reason);
+   assert.equal(reports.length,1);
+   assert.equal(f.state.calls.length,reads);
+ });
  await check('真实工事协议编码字段，默认关闭和赛季未开放无消费',async()=>{const f=fixture();const body={cityId:1,item:{itemId:'耐火砖',num:10},selectPackNum:0};assert.equal(protocol.DonateFortRequest.decode(protocol.DonateFortRequest.encode(body).finish()).selectPackNum,0);f.settings.guildFort.enabled=false;assert((await run(f)).skipped);assert.equal(f.state.calls.length,0);f.settings.guildFort.enabled=true;f.player.worldId='2000001';assert.match((await run(f)).reason,/赛季/);assert.equal(f.state.writes.length,0);});
  await check('名单为空仅沿用明确互助白名单，没有选择不任意捐材料',async()=>{const f=fixture();f.settings.guildFort.materials=[];assert.deepEqual(guildFortMaterials(f.settings),[]);assert.equal((await read(f)).candidates.length,0);f.settings.alliance.allowedMaterials=['耐火砖'];assert.deepEqual(guildFortMaterials(f.settings),['耐火砖']);assert.equal((await read(f)).candidates[0].id,'耐火砖');f.settings.guildFort.materials=['高温合金'];assert.deepEqual(guildFortMaterials(f.settings),['高温合金']);});
  await check('只捐库存选中材料，预留竞争订单和库存阈值，从不购买/兑换/建造',async()=>{const f=fixture();f.state.stock.耐火砖=30;f.settings.guildFort.reserve=5;f.state.workerOrder=[{index:1,requirements:[{type:0,id:'耐火砖',num:10}]}];assert.equal((await read(f)).candidates[0].num,15);const r=await run(f);assert.equal(r.ok,true,r.error);assert.deepEqual(f.state.writes,[{name:'DonateFortRequest',body:{cityId:1,item:{itemId:'耐火砖',num:15},selectPackNum:0}}]);assert.equal(f.state.stock.耐火砖,15);assert.equal(f.ledger.snapshot().uncertain,0);assert.equal(pendingOrderMaterialSpends(f.player).length,0);});

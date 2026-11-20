@@ -1,6 +1,35 @@
 import { getConsoleStore } from "./lib/console-store";
 import type { LoginSettingsMount } from "./pages/login-settings";
 
+const dailyHost = document.getElementById("daily-tasks-root");
+if (dailyHost) {
+  const host = dailyHost;
+  const store = getConsoleStore();
+  let loading = false;
+  const loadDailies = async () => {
+    if (loading || store.getState().view.page !== "dailies") return;
+    loading = true;
+    host.textContent = "正在载入日常任务…";
+    try {
+      const { mountDailyTasks } = await import("./pages/daily-tasks");
+      mountDailyTasks(host);
+      unsubscribe();
+    } catch {
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.textContent = "载入失败，重试日常任务";
+      retry.onclick = loadDailies;
+      host.replaceChildren(retry);
+    } finally {
+      loading = false;
+    }
+  };
+  const unsubscribe = store.subscribe((state, previous) => {
+    if (state.view.page !== previous.view.page) void loadDailies();
+  });
+  void loadDailies();
+}
+
 const hostElement = document.getElementById("login-settings-root");
 const dialogElement = document.getElementById("account-login-dialog");
 const titleElement = document.getElementById("account-login-title");

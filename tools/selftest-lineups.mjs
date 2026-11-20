@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { getConfig } from '../src/config.mjs';
 import { loadProtocol } from '../src/proto.mjs';
-import { applyLineup, lineupCatalog, readLineups } from '../src/lineups.mjs';
+import { applyLineup, lineupCatalog, readLineups, editorLineupRecommendations } from '../src/lineups.mjs';
 
 const protocol = loadProtocol();
 const form = (id, formInfo, formId, heros, stances, pet = '') => ({
@@ -81,6 +81,18 @@ function fixture(overrides = {}) {
   const catalog = lineupCatalog(config);
   assert.equal(catalog.length, 3, 'drops bad rows and merges duplicate lineups');
   assert.deepEqual(catalog[0].labels, ['常规搭配', '世界BOSS阵容']);
+}
+
+{
+  const editor = { heroes: ['h0', 'h1', 'h2'].map(heroId => ({ heroId, power: 1 })), capacity: 3,
+    formations: [{ presetId: 1, unlocked: true }, { presetId: 7, unlocked: false }] };
+  const choices = editorLineupRecommendations(config, editor);
+  assert.equal(choices.length, 3);
+  assert.equal(choices[0].formation.presetId, 1, '锁定阵型回退到基础阵型');
+  assert.equal(choices[0].formation.heroPositions.length, 3);
+  assert(choices.slice(1).every(choice => !choice.formation && choice.reason.includes('缺少英雄')));
+  const limited = editorLineupRecommendations(config, { ...editor, capacity: 2 });
+  assert(limited.every(choice => !choice.formation && choice.reason.includes('名额')));
 }
 
 {

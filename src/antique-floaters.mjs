@@ -12,7 +12,9 @@ export async function collectAntiqueFloaters(client,config,{enabled,report,ledge
  state.busy=true;
  const label='海面藏品宝箱打捞', skip=reason=>report({label,skipped:true,reason});
  try {
-  const rows=(config?.tables?.GarbageProductionCfg?.data??[]).filter(r=>r.type==='打捞' && typeof r.production?.[0]==='string' && r.production[0].startsWith('藏品') && r.production[0].endsWith('碎片'));
+  const configRows = config?.tables?.GarbageProductionCfg?.data;
+  if (!Array.isArray(configRows)) { skip('未读取到海面藏品宝箱配置'); return; }
+  const rows=configRows.filter(r=>r.type==='打捞' && typeof r.production?.[0]==='string' && r.production[0].startsWith('藏品') && r.production[0].endsWith('碎片'));
   const read=async()=>{
    const reply=await client.request('OnWaterRequest',{},'OnWaterResponse');
    if(!Array.isArray(reply?.floater))throw Error('未能确认海面漂浮物');
@@ -21,11 +23,17 @@ export async function collectAntiqueFloaters(client,config,{enabled,report,ledge
    return result;
   };
   const items=await read();
-  if(!items.length){if(!dryRun)state.seen.clear();return;}
+  if (!items.length) {
+    if (!dryRun) {
+      state.seen.clear();
+      skip('当前海面没有可打捞的藏品宝箱');
+    }
+    return;
+  }
   if(dryRun){report({planned:true,action:{kind:'antiqueFloaters',label:'打捞海面藏品宝箱（当前 '+items.reduce((sum,x)=>sum+x.num,0)+' 个，每轮最多1个）',costs:[]}});return;}
   if(!ledger) {skip('未能读取打捞确认记录');return;}
   for(const id of state.seen.keys())if(!items.some(x=>x.id===id))state.seen.delete(id);
-  const item=items.find(x=>(state.denied.get(x.id)??0)<=now());if(!item)return;
+  const item=items.find(x=>(state.denied.get(x.id)??0)<=now());if(!item){skip('上次打捞被拒绝，等待冷却结束');return;}
   const key='antique-floater:'+createHash('sha256').update(item.id).digest('hex').slice(0,20);
   const record=ledger.keyRecords()[key];
   if(record && !record.confirmed){skip('前次藏品宝箱打捞结果待确认，暂停此类宝箱重试');return;}

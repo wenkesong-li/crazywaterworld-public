@@ -129,14 +129,15 @@ try {
     await f.run(); assert.equal(f.client.writes.length, 1, '后续轮次已达标不重复下单');
   });
 
-  await check('全天模式仍执行已选工厂且尊重已有每日锻造次数上限', async () => {
-    const f = forge(); f.settings.weeklyActivity.forgeStop = 'allDay'; f.settings.forge.dailyLimit = 1;
-    await f.run(); assert.equal(f.client.writes.length, 1); assert.equal(f.usage.snapshot().counters.forgeStarts, 1);
+  await check('全天模式为两座已选工厂分别下单', async () => {
+    const f = forge(); f.settings.weeklyActivity.forgeStop = 'allDay';
+    await f.run(); assert.deepEqual(f.client.writes.map(row => row.body.buildingId), ['1装备厂', '2装备厂']);
+    assert.equal(f.usage.snapshot().counters.forgeStarts, 2);
   });
 
   await check('普通锻造总控、领取及续产全关时，活动日仍领取并制造且不改保存值', async () => {
     const f = forge(); f.settings.weeklyActivity.forgeStop = 'allDay';
-    Object.assign(f.settings.forge, { enabled: false, collect: false, craft: false, dailyLimit: 1, buildingIds: ['1装备厂'] });
+    Object.assign(f.settings.forge, { enabled: false, collect: false, craft: false, buildingIds: ['1装备厂'] });
     f.state.factory.equipMaking = { makeId: 1001, finishTime: Math.floor(Date.now() / 1000) - 60, equipId: '测试武器', star: 2 };
     const before = structuredClone(f.settings);
     await f.run();

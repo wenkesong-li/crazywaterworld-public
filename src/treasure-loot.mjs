@@ -1,15 +1,16 @@
+import { fleetSpeedBudgetLimits, speedBudgetAllows } from './fleet-speed-budget.mjs';
 import { toNumber } from './client.mjs';
 import { hasOtherFleetReservations, isFleetReserved, registerFleetReservations } from './fleet-reservations.mjs';
 import { freeFleet, normalizeFleet } from './radar.mjs';
 import { gameplayOpenDay, worldOpenDays } from './extra-rewards.mjs';
-import {fleetRecordReason,legacyFleetReservationReason} from './fleet-availability.mjs';
-import { recordsInWorld, settleFleetSnapshot, treasureSpeedConfirmed as speedConfirmed } from './fleet-settlement.mjs';
+import { isMiningSilicon, fleetRecordReason,legacyFleetReservationReason} from './fleet-availability.mjs';
+import { isTreasureReturn, matchesTreasureReturn, matchesTreasureSpeedLeg, recordsInWorld, settleFleetSnapshot, treasureDispatchEvidence, treasureSpeedConfirmed as speedConfirmed } from './fleet-settlement.mjs';
 // 货轮：读取实际状态后规划，派遣前再次核对；保存设置和预览均不发送游戏动作。
 import { exactAutomationId } from './automation-policy.mjs';
 import { readGuildMembers } from './guild.mjs';
 import { displayMaterial } from './config.mjs';
 import {watchTreasureTravel,matchesFollowDeparture} from './treasure-follow.mjs';
-import { matchesTreasureRewards, treasureRewardPriority } from './treasure-reward-filter.mjs';
+import { matchesTreasureRewards, treasureRewardMissReason, treasureRewardPriority } from './treasure-reward-filter.mjs';
 import { emitDiagnostic } from './trace-log.mjs';
 
 const rows = (config, name) => config?.tables?.[name]?.data ?? [];
@@ -175,6 +176,7 @@ export async function readTreasureLoot(client, protocol, config, player, { targe
   snapshot.fleets = own.fleets.map(fleet => ({ ...fleet, state: fleet.state, durability: fleet.durability, maxDura: fleet.maxDura,
     treasureLootUid: fleet.treasureLootUid, curGridIdx: fleet.curGridIdx,
     moveStartTs: fleet.moveStartTs, moveEndTs: fleet.moveEndTs, targetGridIdx: fleet.targetGridIdx,
+    startGridIdx: fleet.startGridIdx, cityId: fleet.cityId, targetCityId: fleet.targetCityId,
     ownerPlayerId: fleet.owner ? exactAutomationId(fleet.owner.playerId) : null }));
   snapshot.allUids = list.treasure.filter(target => integer(target.uid, 1, 2147483647)).map(target => target.uid);
   const fallback = fallbackState(snapshot, preferences);
@@ -267,34 +269,49 @@ function fleetReason(fleet, snapshot, preferences, allowRepair = false) {
   return '';
 }
 
-function planTreasureSpeed(snapshot, config, settings, fleet, keys, usage, pendingDiamonds, plannedDiamonds) {
+const speedLabel = direction => direction === 'return' ? '回城' : '去程';
+const speedEnabled = (p, direction) => p.marchSpeedUp && (direction === 'return' ? p.returnSpeedUp : p.outboundSpeedUp !== false);
+const speedCounter = direction => direction === 'return' ? 'treasureReturnDiamonds' : 'treasureOutboundDiamonds';
+const speedThreshold = (p, direction) => direction === 'return' ? p.returnTargetSeconds : p.marchTargetSeconds;
+
+function planTreasureSpeed(snapshot, config, settings, fleet, keys, usage, pendingDiamonds, plannedDiamonds, direction) {
   const p = settings.treasure, resources = settings.resources;
   const prior = keys[treasureDispatchKey(snapshot.worldId, fleet.treasureLootUid, fleet.buildingId)];
   const target = snapshot.targets.find(row => row.uid === fleet.treasureLootUid);
-  const uniqueKey = treasureSpeedKey(snapshot.worldId, fleet.treasureLootUid, fleet.buildingId, fleet.moveStartTs);
+  const returning = direction === 'return';
+  const baseKey = treasureSpeedKey(snapshot.worldId, fleet.treasureLootUid, fleet.buildingId, fleet.moveStartTs);
+  const uniqueKey = returning ? baseKey + ':return' : baseKey;
+  const d = prior?.details;
+  const routeMatches = returning
+    ? matchesTreasureReturn(fleet, d)
+    : d?.moveStartTs === fleet.moveStartTs && d?.targetGridIdx === fleet.targetGridIdx &&
+      integer(target?.gridIdx, 1) && target.gridIdx === fleet.targetGridIdx;
+  const threshold = speedThreshold(p, direction);
+  const remaining = fleet.moveEndTs - snapshot.now;
   let reason = snapshot.marchSpeedReason;
   if (!reason && keys[uniqueKey]) reason = '前次行军加速结果待确认';
   if (!reason) reason = fleetRecordReason(keys, fleet.buildingId, snapshot.worldId);
-  if (!reason && (!prior?.confirmed || prior.expired || prior.details?.moveStartTs !== fleet.moveStartTs ||
-      prior.details?.targetGridIdx !== fleet.targetGridIdx || !integer(fleet.moveStartTs, 1) ||
-      !integer(fleet.moveEndTs, fleet.moveStartTs) || !integer(target?.gridIdx, 1) || target.gridIdx !== fleet.targetGridIdx ||
-      fleet.ownerPlayerId && fleet.ownerPlayerId !== snapshot.playerId)) reason = '尚未确认这段巨轮出征航程，等待核对';
-  if (!reason && (!integer(p.marchTargetSeconds, 0, 3600) || fleet.moveEndTs - snapshot.now <= p.marchTargetSeconds)) reason = '行军剩余时间已达到加速目标';
+  if (!reason && (!prior?.confirmed || prior.expired || !routeMatches || !integer(fleet.moveStartTs, 1) ||
+      !integer(fleet.moveEndTs, fleet.moveStartTs) || fleet.ownerPlayerId && fleet.ownerPlayerId !== snapshot.playerId)) {
+    reason = '尚未确认这段巨轮' + speedLabel(direction) + '航程，等待核对';
+  }
+  if (!reason && (!integer(threshold, 0, 3600) || remaining <= threshold)) reason = speedLabel(direction) + '剩余时间已达到加速目标';
   const cost = rows(config, 'WorldParamCfg').find(row => row.paramName === '行军加速消耗')?.paramValue;
   if (!reason && !integer(cost, 1)) reason = '未取得有效行军加速钻石费用';
   if (!reason && !resources?.allowDiamonds) reason = '全局钻石消费开关已关闭';
-  const used = usage.counters ?? {};
-  if (!reason && (!integer(p.dailyDiamondLimit, 1) || !integer(used.treasureDiamonds ?? 0) ||
-      (used.treasureDiamonds ?? 0) + plannedDiamonds + cost > p.dailyDiamondLimit)) reason = '已达到巨轮每日加速钻石预算';
-  if (!reason && (!integer(resources.diamondDailyLimit, 1) || !integer(used.diamonds ?? 0) ||
-      (used.diamonds ?? 0) + plannedDiamonds + cost > resources.diamondDailyLimit)) reason = '已达到全局每日钻石预算';
+  const used = usage.counters ?? {}, counter = speedCounter(direction);
+  const planned = { ...used, [counter]: (used[counter] ?? 0) + plannedDiamonds[direction],
+    treasureDiamonds: (used.treasureDiamonds ?? 0) + plannedDiamonds.total, diamonds: (used.diamonds ?? 0) + plannedDiamonds.total };
+  const limits = fleetSpeedBudgetLimits(settings, 'treasure', counter, used);
+  if (!reason && !speedBudgetAllows(limits, planned, cost)) reason = '巨轮' + speedLabel(direction) + '或全局每日钻石预算不足';
   if (!reason && (!integer(snapshot.diamonds) || !integer(pendingDiamonds) || !integer(resources.diamondThreshold) ||
-      snapshot.diamonds - pendingDiamonds - plannedDiamonds - cost < resources.diamondThreshold)) reason = '加速后钻石不足或低于保留量';
+      snapshot.diamonds - pendingDiamonds - plannedDiamonds.total - cost < resources.diamondThreshold)) reason = '加速后钻石不足或低于保留量';
   if (reason) return { reason };
   return { action: { kind: 'treasureSpeed', request: 'SpeedUpFleetRequest', body: { buildingId: fleet.buildingId },
     buildingId: fleet.buildingId, targetUid: fleet.treasureLootUid, worldId: snapshot.worldId, uniqueKey,
-    beforeEnd: fleet.moveEndTs, moveStartTs: fleet.moveStartTs, targetGridIdx: fleet.targetGridIdx,
-    costs: [{ id: 'RUBY', num: cost }], label: `${fleetName(fleet.buildingId)}巨轮行军加速，消耗 ${cost} 钻石` } };
+    direction, beforeEnd: fleet.moveEndTs, moveStartTs: fleet.moveStartTs, targetGridIdx: fleet.targetGridIdx,
+    ...(returning ? { startGridIdx: fleet.startGridIdx, targetCityId: fleet.targetCityId } : {}),
+    costs: [{ id: 'RUBY', num: cost }], label: `${fleetName(fleet.buildingId)}巨轮${speedLabel(direction)}加速（剩余 ${remaining} 秒，目标 ${threshold} 秒），消耗 ${cost} 钻石` } };
 }
 
 export function planTreasureLoot(snapshot, config, settings, { usage = { counters: {} }, keys = {}, pendingFuel = 0, pendingDiamonds = 0, acceleratedFleetIds = [], reservedFleetIds = [], unavailableFleets = {} } = {}) {
@@ -303,7 +320,7 @@ export function planTreasureLoot(snapshot, config, settings, { usage = { counter
   const plan = { actions: [], notes: [], counts: { treasures: snapshot.targets.length, fleets: snapshot.fleets.length },
     targets: [], fleets: (p?.fleetIds ?? []).filter(id=>snapshot.fleets.some(fleet=>fleet.buildingId===id)).map(buildingId => {
       const fleet = snapshot.fleets.find(row => row.buildingId === buildingId);
-      return { name: fleetName(buildingId), state: fleet ? ({ 1: fleet.curGridIdx > 0 ? '驻守在外' : '空闲', 2: '行军中', 3: '战斗中', 4: '维修中', 5: '排队中' })[fleet.state] || '未知' : '未取得',
+      return { name: fleetName(buildingId), state: fleet ? ({ 1: fleet.curGridIdx > 0 ? '驻守在外' : '空闲', 2: isTreasureReturn(fleet) ? '巨轮回城中' : fleet.treasureLootUid > 0 && !fleet.targetCityId ? '巨轮去程中' : '行军中', 3: '战斗中', 4: '维修中', 5: '排队中' })[fleet.state] || '未知' : '未取得',
         autoFight: fleet ? fleet.autoFight?.isOn === true : null, durability: fleet?.durability, maxDura: fleet?.maxDura,
         reason: fleet ? fleetReason(fleet, snapshot, p) : '尚未取得这支舰队状态' };
     }), fuel: snapshot.fuel, fuelPerFleet: snapshot.fuelPerFleet };
@@ -331,19 +348,24 @@ export function planTreasureLoot(snapshot, config, settings, { usage = { counter
       (p.avoidPlayerIds ?? []).includes(row.playerId) && row.name === member.name && (member.guildIdx == null || row.guildIdx === member.guildIdx)))) reason = '当前守军或战斗者命中所选避战玩家';
     let normalReason = reason;
     if (!normalReason && !normalQualities(p).includes(target.quality)) normalReason = '未勾选此类型的常规货轮';
-    if (!normalReason && !matchesTreasureRewards(config, p.rewardItems, target.reward)) normalReason = '未命中任一普通目标奖励';
+    if (!normalReason && !matchesTreasureRewards(config, p.rewardItems, target.reward, p.rewardMatchMode, p.rewardMinHits)) {
+      normalReason = treasureRewardMissReason('普通', p.rewardMatchMode, p.rewardMinHits);
+    }
     const normalSpeedAllowed = !normalReason;
     const repeatFollow = p.fleetIds.some(id => repeatFollowRecord(keys, snapshot, target, snapshot.fleets.find(fleet => fleet.buildingId === id), p));
     if (!normalReason && !follow && !repeatFollow && (p.follow || !p.autoJoin)) normalReason = '未匹配指定跟随玩家的已出发舰队或当前守军，等待目标，不参加其他货轮';
     const fallbackEligible = !reason && fallback.active && p.fallbackQualities?.includes(target.quality);
+    const medium = target.quality === 'PURPLE';
+    const fallbackMode = medium ? p.fallbackMediumRewardMatchMode : p.fallbackSmallRewardMatchMode;
+    const fallbackMinHits = medium ? p.fallbackMediumRewardMinHits : p.fallbackSmallRewardMinHits;
     const fallbackPriority = fallbackEligible ? treasureRewardPriority(config,
-      target.quality === 'PURPLE' ? p.fallbackMediumRewardPriority : p.fallbackSmallRewardPriority, target.reward) : -1;
+      medium ? p.fallbackMediumRewardPriority : p.fallbackSmallRewardPriority, target.reward, fallbackMode, fallbackMinHits) : -1;
     const fallbackAllowed = fallbackPriority >= 0;
     if (normalSpeedAllowed || fallbackAllowed) speedTargets.add(target.uid);
     const reward = (target.reward ?? []).slice(0, 3).map(asset => displayMaterial(config, asset.id)).join('、');
     const label = `${target.name || '货轮'}（${reward || '奖励未确认'}，进度 ${target.progress ?? '?'}%）`;
     reason = fallbackAllowed ? '' : normalReason;
-    if (reason && fallbackEligible) reason += '；未命中任一兜底目标奖励';
+    if (reason && fallbackEligible) reason += '；' + treasureRewardMissReason('兜底', fallbackMode, fallbackMinHits);
     plan.targets.push({ label, reason, followName: follow?.name ?? null,followPhase:follow?.phase??null, personalProgress: target.personalProgress, personalProgressLimit: p.personalProgressLimit });
     if (reason) plan.notes.push(label + '：' + reason);
     if (!normalReason) candidates.push({ target, follow, label, isFallback: false, qualityPriority: 0, rewardPriority: 0 });
@@ -354,14 +376,14 @@ export function planTreasureLoot(snapshot, config, settings, { usage = { counter
   candidates.sort((a, b) => Number(a.isFallback) - Number(b.isFallback) || a.qualityPriority - b.qualityPriority ||
     a.rewardPriority - b.rewardPriority || (a.follow?.priority ?? Infinity) - (b.follow?.priority ?? Infinity) || a.target.progress - b.target.progress || a.target.uid - b.target.uid);
   if (!snapshot.targets.length) plan.notes.push(fallback.active ? '当前没有可读取的常规或所选兜底货轮' : waitingForTreasure(p));
-  if (rewardBlocked) return plan;
   // 一艘货轮最多占一个潜在领奖名额，已在途和结果未知的派遣也计入，避免兜底同时铺满所有舰队。
   const rewardTargets = new Set(snapshot.fleets.filter(fleet => fleet.treasureLootUid > 0).map(fleet => fleet.treasureLootUid));
   for (const [key, record] of Object.entries(keys)) {
     const uid = Number(record.details?.uid);
     if (key.startsWith('treasure:') && !record.expired && !record.confirmed && snapshot.allUids?.includes(uid)) rewardTargets.add(uid);
   }
-  let fuel = snapshot.fuel - pendingFuel, plannedDiamonds = 0;
+  let fuel = snapshot.fuel - pendingFuel;
+  const plannedDiamonds = { outbound: 0, return: 0, total: 0 };
   if (!integer(pendingFuel)) { plan.notes.push('未确认派遣的汽油记录异常，停止派遣'); return plan; }
   if (pendingFuel > 0) plan.notes.push(`有 ${pendingFuel} 汽油的出征或维修结果待确认，暂扣除同额可用库存`);
   let count = usage.counters?.treasureDispatches ?? 0;
@@ -369,13 +391,20 @@ export function planTreasureLoot(snapshot, config, settings, { usage = { counter
   for (const buildingId of p.fleetIds) {
     const fleet = snapshot.fleets.find(row => row.buildingId === buildingId);
     if (!fleet) continue;
-    if (p.marchSpeedUp && !acceleratedFleetIds.includes(buildingId) && fleet?.state === 2 && fleet.treasureLootUid > 0) {
-      const speed = planTreasureSpeed(snapshot, config, settings, fleet, keys, usage, pendingDiamonds, plannedDiamonds);
+    const direction = fleet.targetCityId > 0 ? 'return' : 'outbound';
+    if (rewardBlocked && !isTreasureReturn(fleet)) continue;
+    if (speedEnabled(p, direction) && !acceleratedFleetIds.includes(buildingId) && fleet?.state === 2 && fleet.treasureLootUid > 0) {
+      const speed = planTreasureSpeed(snapshot, config, settings, fleet, keys, usage, pendingDiamonds, plannedDiamonds, direction);
       const reason = unavailableFleets[buildingId] || (reservedFleetIds.includes(buildingId) ? '城战时段保留给城战接续' : '') ||
-        (!speedTargets.has(fleet.treasureLootUid) ? '当前货轮已不满足参与条件，暂停行军加速' : '') || speed.reason;
+        (direction === 'outbound' && !speedTargets.has(fleet.treasureLootUid) ? '当前货轮已不满足参与条件，暂停行军加速' : '') || speed.reason;
       const view = plan.fleets.find(row => row.name === fleetName(buildingId));
       if (reason) { if (view) view.reason = reason; plan.notes.push(fleetName(buildingId) + '：' + reason); }
-      else { plan.actions.push(speed.action); plannedDiamonds += speed.action.costs[0].num; if (view) view.reason = '按剩余时间目标加速出征航程'; }
+      else {
+        plan.actions.push(speed.action);
+        plannedDiamonds[direction] += speed.action.costs[0].num;
+        plannedDiamonds.total += speed.action.costs[0].num;
+        if (view) view.reason = '按剩余时间目标加速' + speedLabel(direction) + '航程';
+      }
       continue;
     }
     let reason = fleet ? fleetReason(fleet, snapshot, p, true) : '当前没有这支已出征编队，请先在游戏或舰队编队页完成编队';
@@ -425,7 +454,7 @@ export function planTreasureLoot(snapshot, config, settings, { usage = { counter
       continue;
     }
     plan.actions.push({ kind: 'treasureDispatch', request: requestName,
-      body: { uid: target.uid, fleetBuildingIds: [buildingId] }, buildingId, targetUid: target.uid, worldId: snapshot.worldId, mode: isFallback ? 'fallback' : follow ? 'follow' : 'auto', repeatFollow,
+      body: { uid: target.uid, fleetBuildingIds: [buildingId] }, cargoGridIdx: target.gridIdx, buildingId, targetUid: target.uid, worldId: snapshot.worldId, mode: isFallback ? 'fallback' : follow ? 'follow' : 'auto', repeatFollow,
       followName: follow?.name ?? null, followPlayerId: follow?.playerId ?? null,followPhase:follow?.phase??null,followDepartedAt:follow?.departedAt??null,followSeenAt:follow?.seenAt??null,
       uniqueKey: treasureDispatchKey(snapshot.worldId, target.uid, buildingId),
       costs: [{ id: '汽油', num: snapshot.fuelPerFleet }],
@@ -450,15 +479,22 @@ function reconcileKeys(snapshot, ledger, baseline) {
       const uid = Number(match[2]), fleet = snapshot.fleets.find(row => row.buildingId === match[3] + '远征船');
       if (!record.confirmed && !record.expired) {
         if (fleet?.treasureLootUid === uid) {
-          ledger.resolveKey(key, true, { ...record.details, moveStartTs: fleet.moveStartTs, targetGridIdx: fleet.targetGridIdx });
+          ledger.resolveKey(key, true, treasureDispatchEvidence(record.details, fleet));
           record.confirmed = true;
         }
         else if (homeIdle(fleet) && !snapshot.allUids.includes(uid)) ledger.resolveKey(key, false);
       }
+      // 升级时仅为仍与旧派遣记录完全一致的去程补记货轮格。
+      const d = record.details;
+      if (record.confirmed && !record.expired && d && d.cargoGridIdx == null && fleet?.state === 2 &&
+          !fleet.targetCityId && fleet.treasureLootUid === uid && integer(d.moveStartTs, 1) &&
+          fleet.moveStartTs === d.moveStartTs && integer(d.targetGridIdx, 1) && fleet.targetGridIdx === d.targetGridIdx) {
+        ledger.updateKeyDetails(key, { ...d, cargoGridIdx: d.targetGridIdx });
+      }
       if (snapshot.allUids.includes(uid)) rememberFollow(ledger, snapshot.worldId, uid, match[3] + '远征船', record);
     }
   }
-  settleFleetSnapshot(ledger,{worldId:snapshot.worldId,fleets:snapshot.fleets,now:snapshot.now,kinds:['treasureRepair','treasureSpeed','pirateFirst'],baseline});
+  settleFleetSnapshot(ledger,{worldId:snapshot.worldId,fleets:snapshot.fleets,now:snapshot.now,kinds:['treasureDispatch','treasureRepair','treasureSpeed','pirateFirst'],baseline});
 }
 
 export async function runTreasureLoot(client, protocol, config, player, { getSettings, ledger,
@@ -501,7 +537,7 @@ export async function runTreasureLoot(client, protocol, config, player, { getSet
       const current = getSettings();
       const reviewed = planTreasureLoot(fresh, config, current, planOptions());
       const step = reviewed.actions.find(action => action.uniqueKey === proposed.uniqueKey && action.kind === proposed.kind && action.targetUid === proposed.targetUid && action.costs[0].num === proposed.costs[0].num &&
-        (proposed.kind !== 'treasureSpeed' || action.moveStartTs === proposed.moveStartTs && action.beforeEnd === proposed.beforeEnd && action.targetGridIdx === proposed.targetGridIdx) &&
+        (proposed.kind !== 'treasureSpeed' || action.direction === proposed.direction && action.moveStartTs === proposed.moveStartTs && action.beforeEnd === proposed.beforeEnd && action.targetGridIdx === proposed.targetGridIdx && action.startGridIdx === proposed.startGridIdx && action.targetCityId === proposed.targetCityId) &&
         (proposed.mode !== 'follow' || (action.mode === 'follow' && (proposed.repeatFollow ? action.repeatFollow :
           action.followName === proposed.followName && action.followPlayerId === proposed.followPlayerId))));
       if (!step) {
@@ -513,11 +549,10 @@ export async function runTreasureLoot(client, protocol, config, player, { getSet
       if (step.kind === 'treasureSpeed') {
         const latest = await client.request('MyFleetsRequest', {}, 'MyFleetsResponse', 8000);
         const fleet = latest.fleets?.find(row => row.buildingId === step.buildingId);
-        if (fleet?.state !== 2 || fleet.treasureLootUid !== step.targetUid || fleet.targetGridIdx !== step.targetGridIdx ||
-            fleet.moveStartTs !== step.moveStartTs || fleet.moveEndTs !== step.beforeEnd ||
-            fleet.moveEndTs - serverNow(client) <= current.treasure.marchTargetSeconds ||
+        if (!matchesTreasureSpeedLeg(fleet, { ...step, uid: step.targetUid }) || fleet.moveEndTs !== step.beforeEnd ||
+            fleet.moveEndTs - serverNow(client) <= speedThreshold(current.treasure, step.direction) ||
             fleet.owner && exactAutomationId(fleet.owner.playerId) !== fresh.playerId) {
-          const entry = { step, skipped: true, reason: '加速前出征航程已变化或剩余时间已达目标' };
+          const entry = { step, skipped: true, reason: '加速前' + speedLabel(step.direction) + '航程已变化或剩余时间已达目标' };
           results.push(entry); onStep?.(entry); continue;
         }
       }
@@ -534,19 +569,20 @@ export async function runTreasureLoot(client, protocol, config, player, { getSet
         results.push(entry); onStep?.(entry); continue;
       }
       const repair = step.kind === 'treasureRepair', speed = step.kind === 'treasureSpeed';
-      const limits = speed ? { diamonds: current.resources.diamondDailyLimit, treasureDiamonds: current.treasure.dailyDiamondLimit }
+      const limits = speed ? fleetSpeedBudgetLimits(current, 'treasure', speedCounter(step.direction), ledger.snapshot().counters)
         : !repair && current.treasure.dailyDispatchLimit > 0 ? { treasureDispatches: current.treasure.dailyDispatchLimit } : {};
-      const counters = speed ? { diamonds: step.costs[0].num, treasureDiamonds: step.costs[0].num }
+      const counters = speed ? { diamonds: step.costs[0].num, treasureDiamonds: step.costs[0].num, [speedCounter(step.direction)]: step.costs[0].num }
         : repair ? { treasureRepairs: 1, treasureRepairPetrol: step.costs[0].num, treasurePetrol: step.costs[0].num } : { treasureDispatches: 1, treasurePetrol: step.costs[0].num };
       // 直到实际准备再次派遣才换锁，维修或跳过检查不能抹掉已参与记录。
       if (!repair && !speed && canRepeat(ledger.keyRecords()[step.uniqueKey], fresh.fleets.find(row => row.buildingId === step.buildingId), current.treasure)) ledger.releaseCompletedKey(step.uniqueKey);
       const ticket = ledger.reserve(counters, limits, {}, { uniqueKey: step.uniqueKey,
         details: { kind: step.kind, worldId: fresh.worldId, buildingId: step.buildingId, uid: step.targetUid,
-          ...(speed ? { beforeEnd: step.beforeEnd, moveStartTs: step.moveStartTs, targetGridIdx: step.targetGridIdx } : {}),
+          ...(step.kind === 'treasureDispatch' ? { cargoGridIdx: step.cargoGridIdx } : {}),
+          ...(speed ? { direction: step.direction, startGridIdx: step.startGridIdx, targetCityId: step.targetCityId, beforeEnd: step.beforeEnd, moveStartTs: step.moveStartTs, targetGridIdx: step.targetGridIdx } : {}),
           beforeDurability: step.beforeDurability ?? fresh.fleets.find(row => row.buildingId === step.buildingId)?.durability, sentAt: fresh.now,followName:step.followName,followPlayerId:step.followPlayerId,followPhase:step.followPhase,followDepartedAt:step.followDepartedAt,followSeenAt:step.followSeenAt } });
       if (!enabled() || !client.connected || current !== getSettings() || !treasureAutomationEnabled(getSettings()) ||
-          speed && (!current.treasure.marchSpeedUp || !current.resources.allowDiamonds || !current.treasure.fleetIds.includes(step.buildingId) ||
-            step.beforeEnd - serverNow(client) <= current.treasure.marchTargetSeconds) || legacyFleetReservationReason(client,step.buildingId)) { ledger.cancel(ticket); break; }
+          speed && (!speedEnabled(current.treasure, step.direction) || !current.resources.allowDiamonds || !current.treasure.fleetIds.includes(step.buildingId) ||
+            step.beforeEnd - serverNow(client) <= speedThreshold(current.treasure, step.direction)) || legacyFleetReservationReason(client,step.buildingId)) { ledger.cancel(ticket); break; }
       let entry;
       try {
         await client.sendWatch(step.request, step.body, { window: 600 });
@@ -560,11 +596,10 @@ export async function runTreasureLoot(client, protocol, config, player, { getSet
           confirmed = !!confirmedFleet && exactAutomationId(player.playerId) === fresh.playerId && exactQuantity(player.worldId) === fresh.worldId;
         } catch (error) { emitDiagnostic(client, 'treasure-confirmation-failed', { step, error }); }
         if (confirmed) {
-          if (step.kind === 'treasureDispatch') ledger.resolveKey(step.uniqueKey, true, { ...ledger.keyRecords()[step.uniqueKey].details,
-            moveStartTs: confirmedFleet.moveStartTs, targetGridIdx: confirmedFleet.targetGridIdx });
+          if (step.kind === 'treasureDispatch') ledger.resolveKey(step.uniqueKey, true, treasureDispatchEvidence(ledger.keyRecords()[step.uniqueKey].details, confirmedFleet));
           else ledger.confirm(ticket);
           if (speed) { ledger.releaseCompletedKey(step.uniqueKey); acceleratedFleetIds.push(step.buildingId); }
-          entry = { step, ok: true, status: 'confirmed', note: speed ? '服务器已确认同一巨轮航程的结束时间提前' : repair ? '服务器已确认普通维修，完成后再检查巨轮' : '服务器已确认舰队前往该巨轮' };
+          entry = { step, ok: true, status: 'confirmed', note: speed ? '服务器已确认巨轮' + speedLabel(step.direction) + '结束时间提前' : repair ? '服务器已确认普通维修，完成后再检查巨轮' : '服务器已确认舰队前往该巨轮' };
         }
         else entry = { step, ok: true, sent: true, status: 'unknown', note: '请求已发送，结果待确认；保留预算并锁定舰队' };
       } catch (error) {
@@ -580,14 +615,16 @@ export async function runTreasureLoot(client, protocol, config, player, { getSet
         else remainingFuel -= step.costs[0].num;
       }
       if (entry.status !== 'confirmed') break;
-      if (step.kind === 'treasureDispatch' && getSettings().treasure.marchSpeedUp && enabled() && client.connected) {
+      if (step.kind === 'treasureDispatch' && speedEnabled(getSettings().treasure, 'outbound') && enabled() && client.connected) {
         const departing = await readTreasureLoot(client, protocol, config, player, { targetUid: step.targetUid, preferences: getSettings().treasure });
         const acceleration = planTreasureLoot(departing, config, getSettings(), planOptions()).actions.find(action =>
           action.kind === 'treasureSpeed' && action.buildingId === step.buildingId);
         if (acceleration) plan.actions.push(acceleration);
       }
     }
-    return { results, notes: plan.notes };
+    return { results, notes: plan.notes, nextRefreshTime: snapshot.nextRefreshTime,
+      canPrepare: !snapshot.reason,
+      miningFleetIds: snapshot.fleets.filter(isMiningSilicon).map(f => f.buildingId) };
   } finally { inFlight.delete(client); }
 }
 
@@ -682,17 +719,18 @@ export async function serviceTreasureLoot(client, config, { player, protocol, ge
     if (!Array.isArray(treasures)) throw new Error('未能读取宝藏列表');
     const types = treasureTypes(protocol, config);
     const preferences = getSettings()?.treasure;
-    const allowsType = (row, prefs) => types.some(type => type.color === row.color && normalQualities(prefs).includes(type.quality));
-    const target = pickTreasure(treasures.filter(row => allowsType(row, preferences)), guildId % 1000, session.refused, now);
+    const allowsTarget = (row, prefs) => types.some(type => type.color === row.color && normalQualities(prefs).includes(type.quality)) &&
+      matchesTreasureRewards(config, prefs?.rewardItems, row.reward?.asset, prefs?.rewardMatchMode, prefs?.rewardMinHits);
+    const target = pickTreasure(treasures.filter(row => allowsTarget(row, preferences)), guildId % 1000, session.refused, now);
     if (!target) { later(300); return skip(waitingForTreasure(preferences) + '（仅考虑无主或本盟目标）'); }
     const fleet = pickTreasureFleet(fleets, client);
     if (!fleet) { later(300); return skip('没有空闲且耐久不低于 80% 的舰队'); }
     if (!enabled()) return;
-    // 旧入口也复读原目标并检查最新勾选的类型。
+    // 旧入口也复读原目标并检查最新的类型和奖励筛选。
     const freshTargets = (await client.request('TreasureLootListRequest', {}, 'TreasureLootListResponse'))?.treasure;
     if (!Array.isArray(freshTargets)) throw new Error('出征前未能确认货轮列表');
     const matches = freshTargets.filter(row => row.uid === target.uid);
-    if (matches.length !== 1 || !allowsType(matches[0], getSettings()?.treasure) ||
+    if (matches.length !== 1 || !allowsTarget(matches[0], getSettings()?.treasure) ||
         !pickTreasure(matches, guildId % 1000, session.refused, now)) {
       later(300); return skip('出征前货轮类型、归属或筛选条件已变化，保持等待');
     }

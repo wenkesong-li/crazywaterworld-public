@@ -138,8 +138,11 @@ try {
       assert.equal(field.when?.(draft), false, field.key + '在原生模式不可见');
     }
     draft.forge.nativeAuto = false;
-    for (const key of ['collect', 'craft', 'decompose', 'recipeIds', 'materialReserve', 'dailyLimit', 'dailyGoldLimit']) {
+    for (const key of ['collect', 'craft', 'decompose', 'recipeIds', 'universal', 'universalReserve']) {
       assert.equal(fields.find(field => field.key === 'forge.' + key).when(draft), true);
+    }
+    for (const key of ['forge.materialReserve', 'forge.goldReserve', 'forge.dailyLimit', 'forge.dailyGoldLimit', 'antique.goldReserve', 'antique.dailyGoldLimit']) {
+      assert(!groups.some(group => group.fields.some(field => field.key === key)), key);
     }
     assert.deepEqual(draft.forge, { ...saved, nativeAuto: false });
     draft.forge.craft = false;
@@ -395,6 +398,8 @@ try {
     }
     for (const [field, values] of [
       ['marchSpeedUp', ['true', 1, null]],
+      ['outboundSpeedUp', ['true', 1, null]], ['returnSpeedUp', ['true', 1, null]],
+      ['returnTargetSeconds', [-1, 3601, 0.5, '60', null]],
       ['marchTargetSeconds', [-1, 3601, 0.5, '60', null]],
       ['dailyDiamondLimit', [-1, 100000001, 0.5, '300', null]],
     ]) {
@@ -451,7 +456,19 @@ try {
     for (const key of ['rewardItems', 'fallbackMediumRewardPriority', 'fallbackSmallRewardPriority']) {
       const field = fields.find(field => field.key === 'treasure.' + key);
       assert.equal(field.catalog, 'treasureRewards');
-      assert.match(field.label, /任一/);
+    }
+    for (const prefix of ['reward', 'fallbackMediumReward', 'fallbackSmallReward']) {
+      const mode = prefix + 'MatchMode', min = prefix + 'MinHits';
+      const modeField = fields.find(field => field.key === 'treasure.' + mode);
+      const minField = fields.find(field => field.key === 'treasure.' + min);
+      assert.deepEqual(modeField.options.map(option => option[1]), ['全部命中', '任一命中', '命中多个']);
+      assert.equal(modeField.kind, 'radio');
+      assert.equal(minField.when(draft), false);
+      draft.treasure[mode] = 'multiple';
+      draft.treasure.fallbackEnabled = true;
+      assert.equal(minField.when(draft), true);
+      draft.treasure.fallbackEnabled = false;
+      assert.equal(minField.when(draft), prefix === 'reward');
     }
     assert.equal(fields.find(field => field.key === 'treasure.fallbackAfter').kind, 'time');
     assert.equal(fields.find(field => field.key === 'treasure.fallbackAfter').when(draft), false);
@@ -465,7 +482,7 @@ try {
     const editor = source.slice(source.indexOf('function configMultiselect('), source.indexOf('function configCropEditor('));
     const render = newStateFunction('spec', 'draft', 'catalog', 'el', 'clear', 'configButton', `
       const configEditor = { data: { catalog } };
-      const configPlacePanel = () => {};
+      const configOpenSearchPanel = () => {};
       const configGet = key => key.split('.').reduce((value, part) => value[part], draft);
       const configSet = (key, value) => { const [group, field] = key.split('.'); draft[group][field] = value; };
       ${editor}
@@ -522,7 +539,7 @@ try {
     }
     const legacy = defaultSettings();
     for (const key of retiredAutomationTasks) legacy.schedule[key] = true;
-    Object.assign(legacy.forge, { enabled: true, buildingIds: ['1装备厂'], recipeIds: ['1001'], dailyLimit: 7 });
+    Object.assign(legacy.forge, { enabled: true, buildingIds: ['1装备厂'], recipeIds: ['1001'], universalReserve: 7 });
     const normalized = validateSettings(legacy);
     assert.deepEqual(normalized.forge, legacy.forge, '兼容旧装备开关时不改已授权的锻造设置');
     for (const key of retiredAutomationTasks) {
@@ -675,15 +692,31 @@ try {
     const reads = [], writes = [];
     const client = new EventEmitter(); client.connected = true;
     client.request = async name => { reads.push(name); assert.ok(responses.has(name), '不应读取 ' + name); return structuredClone(responses.get(name)); };
-    client.sendWatch = async (name, body) => { writes.push({ name, body }); responses.set('AllItemRequest', { items: [{ itemId: '加速器', num: 2 }] }); return {}; };
+    client.sendWatch = async (name, body) => {
+      writes.push({ name, body });
+      factory.factory.factoryQ[0].finishTime -= body.speedUp.useNum * 60;
+      responses.set('AllItemRequest', { items: [{ itemId: '加速器', num: 2 }] });
+      return {};
+    };
     const options = { config, player: { playerId: '9102000000000001', worldId: 1001001, level: 36 }, rounds: 1, allowMutate: true,
       isEnabled: key => flags[key] === true, getSettings: () => settings };
     const result = await runLoop(client, protocol, options);
     assert.ok(reads.includes('CargoShipsRequest'), '关闭自动贸易和新增排产时仍须读取来源需求');
     assert.deepEqual(writes, [{ name: 'SpeedUpFactoryProduceRequest', body: { buildingId: '1食品厂', index: 0, speedUp: { type: 2, useNum: 3 } } }]);
     assert.equal(result.history[0].world.results[0].ok, true);
+    const now = Math.floor(Date.now() / 1000);
+    settings.factory.demandPriority = settings.factory.speedUpSources = ['merchant'];
+    settings.weekOrder.enabled = true;
+    flags = nativeTaskValues(settings, {});
+    responses.set('WeekInfoRequest', { activityTime: [{ type: 5, period: 1, startTime: now - 60, endTime: now + 3600 }] });
+    responses.set('WeekOrderInfoRequest', { order: [{ id: '产品甲', num: 1 }] });
+    responses.set('AllItemRequest', { items: [{ itemId: '加速器', num: 5 }] });
+    reads.length = 0; writes.length = 0;
+    await runLoop(client, protocol, options);
+    assert.ok(reads.includes('WeekOrderInfoRequest'), '只开商人来源加速也读取商人订单');
+    assert.deepEqual(writes.map(row => row.name), ['SpeedUpFactoryProduceRequest']);
     settings = applyNativeTask(settings, 'speedUp', false);
-    assert.deepEqual(settings.factory.demandPriority, ['cargo']);
+    assert.deepEqual(settings.factory.demandPriority, ['merchant']);
     assert.deepEqual(settings.factory.speedUpSources, []);
     assert.equal(settings.building.speedUp, false); assert.equal(settings.factory.speedUp, false); assert.equal(settings.farm.speedUp, false);
     flags = nativeTaskValues(settings, {}); assert.equal(flags.speedUp, false);

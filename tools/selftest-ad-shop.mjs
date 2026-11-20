@@ -45,7 +45,10 @@ function fixture({ vip = 3, firstCharge = false, max = [2, 1] } = {}) {
 const names = f => f.calls.map(call => call[0]);
 for (const via of ['VIP', '首充']) {
   const f = fixture({ vip: via === 'VIP' ? 3 : 0, firstCharge: via === '首充' });
-  if (via === '首充') f.options.clientInfo = { channelId: '1422', appId: '14021167', originVersion: '' };
+  f.options.clientInfo = { channelId: 'new', appId: 'other', originVersion: '' };
+  f.config.tables.AdvChannelCfg.data.push({ key: 'new', isOpen: true, minAppVersion: '' });
+  f.options.language = 'en';
+  Object.assign(f.options.player, { channelId: '1422', appId: '14021167' });
   await Promise.all([f.run(), f.run()]);
   assert.deepEqual(f.products.map(p => p.gotTimes), [2, 1]);
   assert.equal(f.log.filter(row => row.ok).length, 3);
@@ -68,10 +71,7 @@ for (const via of ['VIP', '首充']) {
 }
 for (const change of [
   f => { f.options.player.level = 8; },
-  f => { f.options.language = 'en'; },
   f => { f.options.clientInfo.channelId = 'unknown'; },
-  f => { f.options.clientInfo.appId = 'other'; },
-  f => { f.options.player.channelId = '1422'; },
   f => { f.config.tables.AdvChannelCfg.data[0].isOpen = false; },
   f => { f.config.tables.AdvChannelCfg.data[0].minAppVersion = '1.2.0'; },
   f => { f.config.tables.AdvChannelCfg.data[0].minAppVersion = '1.2.0'; f.options.clientInfo.originVersion = '1.1.99'; },
@@ -80,6 +80,13 @@ for (const change of [
   change(f);
   await f.run();
   assert.equal(f.calls.length, 0);
+  assert.equal(f.log[0].skipped, true);
+}
+{
+  const f = fixture({ vip: 0 });
+  f.options.clientInfo.appId = 'other';
+  await f.run();
+  assert.deepEqual(names(f), ['FirstChargeRequest']);
   assert.equal(f.log[0].skipped, true);
 }
 {
@@ -129,5 +136,6 @@ for (const interrupt of ['取消', '跨日', '服务端拒绝']) {
   };
   await f.run();
   assert(!names(f).includes('GotAdvRewardRequest'));
+  if (interrupt === '服务端拒绝') assert.equal(f.log[0].error, 'server prompt: feature locked');
 }
 console.log('ad shop ok: channel and privilege checks, daily limits, per-item confirmation, cancellation and retry');

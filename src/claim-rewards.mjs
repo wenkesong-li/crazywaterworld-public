@@ -3,7 +3,7 @@ import { claimDailies } from './dailies.mjs';
 import { surveyTasks, runTasks } from './tasks.mjs';
 import { claimMail } from './mail.mjs';
 
-export async function claimRewards(client, protocol, config, onResult, enabled = () => true, onAfkDeadline, scheduler, player, { settings = null } = {}) {
+export async function claimRewards(client, protocol, config, onResult, enabled = () => true, onAfkDeadline, scheduler, player, { settings = null, getSettings = () => settings } = {}) {
   const results = [];
   const ready = key => enabled(key) && (!scheduler || scheduler.due(key));
   const report = (label, ok, error, taskKey) => {
@@ -34,7 +34,7 @@ export async function claimRewards(client, protocol, config, onResult, enabled =
     await runTasks(client, protocol, survey, { allowMutate: true, enabled: () => enabled('tasks'), settings,
       onStep: (entry) => report(entry.step.label, entry.ok, entry.error) });
   });
-  if (['dailyRewards', 'chests', 'gift'].some(ready)) await group('日常与赠礼', () => claimDailies(client, protocol, { config, enabled, scheduler, settings,
+  if (['dailyRewards', 'chests', 'gift'].some(ready)) await group('日常与赠礼', () => claimDailies(client, protocol, { config, enabled, scheduler, settings, getSettings,
     onStep: (entry) => report(entry.note || entry.title, entry.ok, entry.error) }));
   if (ready('mail')) await group('邮件', async () => {
     const entry = await claimMail(client, { enabled: () => enabled('mail') });

@@ -202,26 +202,87 @@ html:has(.world-map-detail:modal) { overflow:hidden }
 .world-fuel-summary { display:flex; gap:8px 20px; flex-wrap:wrap; padding:8px 0 }
 .world-fuel-summary strong { margin-left:6px; font-weight:500; font-variant-numeric:tabular-nums }
 .world-journey { font-variant-numeric:tabular-nums }
-#world-view:empty { display:none }
-
 /* ---- 建筑一览 ---- */
-#world-factories { display:grid; grid-template-columns:minmax(0,1fr); align-items:start; gap:16px 24px }
-#world-factories > section { min-width:0 }
-#world-factories h2,#world-orders h2 { margin:0 0 4px }
-#world-factories:not(:empty) + #world-orders:not(:empty) { margin-top:16px }
+#production-plan-result:not(:empty) { display:grid; gap:12px; min-width:0 }
+.production-plan-summary { display:flex; flex-wrap:wrap; align-items:baseline; gap:3px 12px; margin:0; padding:10px 14px; border-inline-start:3px solid var(--primary); background:var(--muted); border-radius:0 6px 6px 0; font-size:13px }
+.production-plan-summary strong { font-size:18px; font-weight:600; font-variant-numeric:tabular-nums }
+#production-plan-result > details { border-top:1px solid var(--border); padding-top:8px }
+#production-plan-result > details > summary { font-size:13px; font-weight:500 }
+#production-plan-result > details[open] > summary { margin-bottom:8px }
+:is(#world-factories,#world-orders,#production-plan-result) [data-slot=table-container] { border:1px solid var(--border); border-radius:8px }
+:is(#world-factories,#world-orders,#production-plan-result) thead { background:var(--muted); font-size:12px }
+.plan-demand-table table { table-layout:fixed }
+.plan-demand-table th:first-child { width:20% }
+.plan-demand-table th:last-child { width:10rem }
+.plan-demand-table td { overflow-wrap:anywhere }
+.plan-demand-materials { font-size:13px; line-height:1.65 }
+.plan-demand-eta { white-space:nowrap; font-variant-numeric:tabular-nums }
+.plan-demand-reason { margin:2px 0 0; font-size:12px; color:var(--muted-foreground) }
+.plan-material-roots,.plan-material-branches { list-style:none; margin:0; padding:0 }
+.plan-material-roots { display:flex; flex-wrap:wrap; align-items:flex-start; gap:2px 10px; min-width:0; max-width:100%; font-size:13px; font-weight:400; text-align:start }
+.plan-material-roots li { min-width:0; max-width:100% }
+.plan-material-label { display:inline-flex; width:fit-content; max-width:100%; align-items:center; gap:4px; min-height:24px; padding:1px 4px; font-size:13px; overflow-wrap:anywhere }
+summary.plan-material-label { font-weight:500 }
+.plan-material-roots details[open] > summary,.plan-material-roots summary:hover { background:var(--muted) }
+summary.plan-material-label::after { width:12px; height:12px }
+.plan-material-branches { margin-left:10px }
+.plan-material-branches > li { position:relative; padding:5px 0 0 12px }
+.plan-material-branches > li::before,.plan-material-branches > li::after { content:""; position:absolute; left:0; border-color:var(--border); border-style:solid }
+.plan-material-branches > li::before { top:0; bottom:0; border-left-width:1px }
+.plan-material-branches > li:last-child::before { bottom:auto; height:18px }
+.plan-material-branches > li::after { top:18px; width:12px; border-top-width:1px }
+@container main (max-width:600px) {
+  .plan-demand-table table,.plan-demand-table tbody { display:block }
+  .plan-demand-table thead { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%) }
+  .plan-demand-table tbody tr { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:baseline; gap:2px 8px; padding:6px 10px }
+  .plan-demand-table td { display:block; min-width:0 }
+  .plan-demand-table td:nth-child(2) { grid-column:1 / -1; grid-row:2 }
+  .plan-demand-table td:last-child { grid-column:2; grid-row:1; font-size:12px }
+  .plan-demand-eta::before { content:"预计 "; color:var(--muted-foreground) }
+}
+#world-view:empty,#world-factories:empty,.world-orders-panel:has(#world-orders:empty) { display:none }
+#world-factories { display:grid; grid-template-columns:minmax(0,1fr); align-items:start; gap:12px }
+#world-factories h2 { margin:0; font:inherit }
+#world-factories [data-slot=card]:has([data-building-list][hidden]) > [data-slot=card-content] { display:none }
 @container main (min-width:720px) {
   #world-factories:has(.world-farm-section):has(.world-slot-section) { grid-template-columns:minmax(0,3fr) minmax(0,2fr) }
   .world-factory-section { grid-column:1 / -1 }
 }
-.factory-queue { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr)); gap:16px }
-.factory-slot { display:grid; align-content:start; gap:2px; min-width:0; font-size:12px }
-.factory-product { font-size:14px; overflow-wrap:anywhere }
+.factory-toggle[aria-expanded="false"] svg { transform:rotate(-90deg) }
+.factory-queue-preview { display:inline-flex; align-items:baseline; gap:6px; flex-wrap:wrap }
+.factory-detail-sections { width:calc(100% - 9px); min-width:0; display:grid; gap:14px; margin:4px 0 10px 9px; padding-inline-start:14px; border-inline-start:2px solid var(--border) }
+.factory-detail-sections h3 { font-size:13px; font-weight:600; margin:0 0 6px }
+.factory-queue { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,145px),1fr)); gap:8px }
+.factory-planned-section { padding-block-start:10px; border-block-start:1px solid var(--border) }
+.factory-planned-section p,.factory-planned-list { margin:0; font-size:12px }
+.factory-planned-caption { margin-inline-start:8px; font-weight:400; font-size:12px }
+.factory-planned-list { display:flex; flex-wrap:wrap; gap:5px 8px; list-style:none; padding:0 }
+.factory-planned-group { display:flex; flex-wrap:wrap; max-width:100%; align-items:baseline; gap:2px 8px; padding:4px 8px; border:1px solid var(--border); border-radius:6px; font-variant-numeric:tabular-nums }
+.factory-planned-time { white-space:nowrap; color:var(--muted-foreground) }
+.factory-slot { display:grid; align-content:start; gap:8px; min-width:0; padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--card); font-size:12px }
+.factory-slot-header,.factory-product,.factory-finish { display:flex; align-items:center; flex-wrap:wrap; gap:4px 6px }
+.factory-slot-header { justify-content:space-between; font-variant-numeric:tabular-nums }
+.factory-product { min-height:24px; font-size:14px; overflow-wrap:anywhere }
+.factory-finish { align-items:baseline; font-variant-numeric:tabular-nums }
+.factory-empty { border-style:dashed; background:transparent }
+@container main (max-width:600px) {
+  .factory-detail-sections { padding-inline-start:8px }
+  .factory-queue { grid-template-columns:repeat(auto-fill,minmax(min(100%,114px),1fr)); gap:6px }
+  .factory-slot { padding:8px; gap:6px }
+  .factory-finish { flex-direction:column; align-items:flex-start; gap:0 }
+}
 .factory-current,.factory-current-product { display:flex; align-items:center; flex-wrap:wrap; gap:2px 8px; min-width:0 }
 .factory-current-product { align-items:baseline; column-gap:4px }
-#factory-production-dialog { grid-template-rows:auto minmax(0,1fr) auto }
-#factory-production-body { min-height:0; overflow-y:auto }
 .production-time { color:var(--muted-foreground); font-variant-numeric:tabular-nums; overflow-wrap:anywhere }
 .order-state { display:grid; justify-items:start; gap:4px; max-width:40ch; white-space:normal }
+.order-state-tags { display:flex; flex-wrap:wrap; gap:4px }
+.order-material-list { display:grid; grid-template-columns:minmax(0,1fr) repeat(3,max-content); gap:2px 8px; margin:0; padding:0; list-style:none; font-size:12px; font-variant-numeric:tabular-nums; color:var(--muted-foreground) }
+.order-material-list li { grid-column:1 / -1; display:grid; grid-template-columns:subgrid; align-items:baseline }
+.order-material-name { color:var(--foreground); overflow-wrap:anywhere }
+.order-material-missing { color:var(--warning) }
+@container main (max-width:600px) {
+  #world-orders .order-state { flex-basis:100%; min-width:0 }
+}
 .order-manual-actions { display:flex; flex-wrap:wrap; gap:6px }
 .order-refresh-time { display:block; font-variant-numeric:tabular-nums; font-size:12px; color:var(--muted-foreground) }
 .stock-panel>summary { padding-inline:24px }
@@ -248,13 +309,39 @@ html:has(.world-map-detail:modal) { overflow:hidden }
 .gift-record-pagination { flex-wrap:wrap; margin-top:12px }
 .gift-record-pagination #gift-page { font-variant-numeric:tabular-nums }
 .gift-account>button,#gift-code-history button { flex:none }
-#gift-batch-dialog { width:min(540px,calc(100vw - 32px)); max-height:calc(100dvh - 32px) }
-#gift-batch-dialog[open] { display:grid; grid-template-rows:auto minmax(0,1fr) auto; gap:20px; overflow:hidden }
+#gift-batch-dialog,#gift-channel-dialog { width:min(540px,calc(100vw - 32px)); max-height:calc(100dvh - 32px) }
+#gift-batch-dialog[open],#gift-channel-dialog[open] { display:grid; grid-template-rows:auto minmax(0,1fr) auto; gap:20px; overflow:hidden }
+#gift-channel-list-dialog { width:min(760px,calc(100vw - 32px)); max-width:none; max-height:calc(100dvh - 32px) }
+#gift-channel-list-dialog[open] { display:grid; grid-template-rows:auto minmax(0,1fr); gap:16px; overflow:hidden }
+.gift-channel-list-heading { display:flex; align-items:center; gap:8px }
+.gift-channel-list-heading h2 { margin:0 auto 0 0 }
+.gift-channel-table { min-width:0; overflow:auto; border:1px solid var(--border); border-radius:var(--radius) }
+.gift-channel-table table { width:100% }
+.gift-channel-table th { position:sticky; top:0; background:var(--card) }
+.gift-channel-table th:not(:first-child) { width:1%; white-space:nowrap }
+.gift-channel-table td:first-child:not([colspan]) { min-width:7rem; max-width:0 }
+.gift-channel-identity { display:flex; align-items:baseline; gap:8px }
+.gift-channel-name,.gift-channel-url { overflow:hidden; white-space:nowrap; text-overflow:ellipsis }
+.gift-channel-url { flex:1 1 0; min-width:0 }
+.gift-channel-time { white-space:nowrap; font-variant-numeric:tabular-nums }
+.gift-channel-actions { display:flex; gap:4px }
+.gift-channel-actions button { flex:none; white-space:nowrap }
+#gift-channel-errors { max-height:18dvh; overflow:auto; overflow-wrap:anywhere }
+#gift-channel-errors:empty,#gift-channel-status:empty { display:none }
+#gift-channel-dialog textarea { min-height:4em; font-family:monospace }
+#gift-channel-result { overflow-wrap:anywhere; white-space:pre-wrap; max-height:9em; overflow-y:auto }
+#gift-channel-result:empty { display:none }
 .gift-batch-fields { display:grid; gap:8px; min-height:0; overflow-y:auto }
 .gift-batch-fields textarea { width:100%; resize:vertical; min-height:120px }
 .gift-batch-fields input { width:100%; min-width:0 }
 #gift-batch-error:empty,#gift-record-notice:empty { display:none }
 @media(max-width:600px) {
+  #gift-channel-list-dialog { width:calc(100vw - 16px); padding:12px }
+  .gift-channel-table :is(th,td) { padding-inline:4px }
+  .gift-channel-table td:first-child:not([colspan]) { min-width:4.5rem }
+  .gift-channel-time { font-size:0.75rem }
+  .gift-channel-url { display:none }
+  .gift-channel-actions button { padding-inline:5px }
   .gift-library-table thead { display:none }
   .gift-library-table tbody { display:block }
   .gift-library-table tr { display:block; padding:10px 12px; border-bottom:1px solid var(--border) }
@@ -297,26 +384,24 @@ html:has(.world-map-detail:modal) { overflow:hidden }
 .account-page-actions { margin-inline-start:auto; flex-wrap:wrap; justify-content:flex-end }
 .account-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr)); align-items:start; gap:16px }
 .account-card { min-width:0 }
-.account-card-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:4px }
-.account-card-badges { display:flex; align-items:center; flex-wrap:wrap; gap:6px }
+.account-card-heading { display:flex; align-items:center; flex-wrap:wrap; gap:2px 6px }
 .account-card [data-account-field=title] { line-height:1.5; overflow-wrap:anywhere }
-.account-card-data { display:grid; grid-template-columns:1fr 1fr; gap:16px 24px }
+.account-card-data { display:grid; grid-template-columns:1fr 1fr; gap:8px 16px }
 .account-card-data>div { min-width:0 }
-.account-card-data dt { margin-bottom:4px; font-size:12px }
+.account-card-data dt { margin-bottom:2px; font-size:12px }
 .account-card-data dd { margin:0; overflow-wrap:anywhere; font-size:14px; font-weight:500 }
 .account-card-data>div:nth-child(-n+2) { grid-column:1 / -1 }
 .account-card-world { display:flex; align-items:center; flex-wrap:wrap; gap:6px 8px }
 .account-card-world>[data-account-field=world] { min-width:0 }
-.account-card-footer { flex-direction:column; align-items:stretch; gap:16px; margin-top:auto }
+.account-card-footer { flex-direction:column; align-items:stretch; gap:8px; margin-top:auto }
 .account-card-footer [data-account-field=seen] { font-size:12px; overflow-wrap:anywhere }
-.account-card-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:8px }
+.account-card-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:4px }
 .account-card-menu { position:relative }
 .account-card-menu>summary { width:32px; height:32px; justify-content:center }
 .account-card-menu>summary::after { display:none }
 .account-card-menu>summary svg { width:18px; height:18px }
-.account-menu-content { position:absolute; top:calc(100% + 6px); right:0; z-index:10; min-width:160px; display:grid; gap:2px; padding:4px }
+.account-menu-content { position:absolute; top:calc(100% + 2px); right:0; z-index:10; width:max-content; display:grid; padding:3px }
 .account-menu-content>button { width:100%; justify-content:flex-start }
-.account-menu-content>p { width:180px; padding:6px 8px; font-size:12px; line-height:1.5 }
 .account-grid>.account-empty { grid-column:1 / -1 }
 .account-empty { display:grid; justify-items:center; gap:12px; padding:56px 24px; text-align:center }
 #account-add-dialog,#account-info-dialog { width:min(680px,calc(100vw - 32px)); max-width:none; padding:24px }

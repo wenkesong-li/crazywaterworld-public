@@ -70,7 +70,7 @@ try {
     await tab('overview');
     assert.equal(await page.locator('#tabs [data-tab="activities"]').getAttribute('aria-label'), '活动');
     assert.equal(await page.locator('#tabs [data-tab="resources"]').getAttribute('aria-label'), '杂项');
-    assert.deepEqual(await page.locator('[data-resource-tab]').allTextContents(), ['联盟', '仓库', '英雄与装备', '礼包兑换']);
+    assert.deepEqual(await page.locator('[data-resource-tab]').allTextContents(), ['联盟', '仓库', '英雄与装备', '礼包兑换', '日常任务']);
     await main('settings');
     await config('base', 'building');
     await page.reload();
@@ -114,6 +114,11 @@ try {
     await tab('resources', 'heroes');
     await page.reload();
     await tab('resources', 'heroes');
+    await page.locator('[data-resource-tab="dailies"]').click();
+    await page.reload();
+    await tab('resources', 'dailies');
+    await page.locator('#tab-dailies').getByText('账号已暂停，请先恢复托管').waitFor();
+    await page.locator('[data-resource-tab="heroes"]').click();
 
     // 活动独立为顶级页面，返回杂项继续显示原子页。
     await main('activities');

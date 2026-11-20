@@ -133,6 +133,7 @@ function loadFixture(initial = dataFor([])) {
     const $ = () => ({});
     const call = async route => { state.calls.push(route); return route.split('?')[0] === '/api/settings' ? structuredClone(state.next) : { controls: [] }; };
     const configBusy = value => { configEditor.busy = value; };
+    const configPageStale = () => false;
     const configMessage = (...args) => state.messages.push(args);
     const configUpdateState = () => {};
     const configUpdateVisibility = () => {};

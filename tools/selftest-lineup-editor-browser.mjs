@@ -204,7 +204,12 @@ try {
   assert.equal(await page.locator('#saved-lineup-view .lineup-editor, .saved-lineup-bindings').count(), 0);
   console.log('通过：保存阵容可离线只读查看，Esc关闭并返回焦点');
 
+  const editorResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/api/lineup-editor');
   await page.getByRole('button', { name: '新建阵容', exact: true }).click();
+  const { recommendations } = await (await editorResponse).json();
+  const available = recommendations.filter(choice => choice.formation);
+  assert(available.length > 3, '完整账号应该能选择前三名以外的攻略搭配');
+  const recommendation = available[3];
   await modal.locator('.lineup-hero').first().waitFor();
   await page.setViewportSize({ width: 1366, height: 720 });
   await assertRosterScroll('新建阵容');
@@ -222,7 +227,9 @@ try {
         const body = dialog.querySelector('.lineup-dialog-body');
         return {
           dialog: box(dialog), roster: box(dialog.querySelector('.lineup-roster-section')),
-          board: box(dialog.querySelector('.lineup-battlefield')),
+          board: box(dialog.querySelector('.lineup-battlefield')), pool: box(dialog.querySelector('.lineup-roster-pool')),
+          search: box(dialog.querySelector('input[type=search]')), type: box(dialog.querySelector('.lineup-formation-select')),
+          apply: box(dialog.querySelector('.lineup-recommend')),
           slots: [...dialog.querySelectorAll('.lineup-slot')].map(slot => ({ position: slot.dataset.lineupPosition, ...box(slot) })),
           save: box([...dialog.querySelectorAll('button')].find(button => button.textContent === '保存阵容')),
           scrollHeight: body.scrollHeight, clientHeight: body.clientHeight,
@@ -230,6 +237,8 @@ try {
       });
       const label = `${height}px ${type.name}(${type.id})`;
       assert(layout.roster.right <= layout.board.left, `${label}英雄池应在阵位左侧`);
+      assert(Math.abs(layout.board.top - layout.pool.top) <= 1, label + '棋盘与英雄列表对齐');
+      assert([layout.type, layout.apply].every(control => Math.abs(control.top - layout.search.top) <= 1), label + '筛选和布阵控件对齐');
       assert(layout.dialog.top >= 0 && layout.dialog.bottom <= height + 1);
       assert(layout.save.top >= 0 && layout.save.bottom <= height, `${label}保存按钮无需滚动即可操作`);
       if (layout.scrollHeight > layout.clientHeight + 2) layoutIssues.push(`${label}弹窗内容溢出：scrollHeight=${layout.scrollHeight}, clientHeight=${layout.clientHeight}`);
@@ -244,10 +253,39 @@ try {
     }
   }
   await page.getByLabel('阵型', { exact: true }).selectOption('1');
+  await modal.locator('.lineup-roster').evaluate(pool => { pool.scrollTop = 0; });
   await page.screenshot({ path: path.join(output, 'lineup-create-desktop-720.png'), animations: 'disabled' });
   assert.deepEqual(layoutIssues, [], '全部解锁阵型应完整显示且站位互不重叠');
+  await page.getByLabel('出战海兽', { exact: true }).selectOption({ index: 1 });
+  const choose = page.getByRole('button', { name: '选择推荐阵容', exact: true });
+  const guide = page.getByRole('dialog', { name: '选择推荐阵容', exact: true });
+  await choose.click();
+  assert.equal(await guide.locator('li').count(), recommendations.length);
+  const search = guide.getByRole('searchbox');
+  await search.fill(recommendation.heroes[0]);
+  assert((await guide.locator('li').allTextContents()).every(text => text.includes(recommendation.heroes[0])));
+  await search.fill('找不到的攻略搭配');
+  assert.equal(await guide.locator('li').count(), 0);
   await page.keyboard.press('Escape');
-  await modal.waitFor({ state: 'detached' });
+  await guide.waitFor({ state: 'detached' });
+  assert.equal(await modal.locator('.lineup-slot .lineup-portrait').count(), 0, '浏览和返回保留棋盘');
+  await choose.click();
+  await page.screenshot({ path: path.join(output, 'lineup-guide-desktop.png'), animations: 'disabled' });
+  const use = guide.getByRole('button', { name: '使用这套', exact: true });
+  await use.nth(3).click();
+  assert.equal(await page.getByLabel('阵容名称', { exact: true }).inputValue(), recommendation.label.slice(0, 60));
+  assert.equal(await page.getByLabel('阵型', { exact: true }).inputValue(), String(recommendation.formation.presetId));
+  assert.equal(await modal.locator('.lineup-slot .lineup-portrait').count(), recommendation.formation.heroPositions.length);
+  await page.screenshot({ path: path.join(output, 'lineup-recommendation-desktop.png'), animations: 'disabled' });
+  await page.getByLabel('阵容名称', { exact: true }).fill('推荐搭配验收');
+  await choose.click();
+  await use.nth(3).click();
+  assert.equal(loadAutomationSettings(accountId).revision, revisionBeforeView, '应用只修改草稿');
+  await saveEditor(page);
+  const recommendedPreset = loadAutomationSettings(accountId).settings.lineups.presets.find(preset => preset.name === '推荐搭配验收');
+  assert.deepEqual(recommendedPreset.formation, {
+    ...recommendation.formation, petUid: '9007199254741000',
+  });
   await page.setViewportSize({ width: 1440, height: 1000 });
   console.log('通过：全部解锁阵型在720/768px桌面左侧英雄池、右侧阵位，无站位重叠且保存操作无需滚动');
 
@@ -449,8 +487,13 @@ try {
   const updated = loadAutomationSettings(accountId); updated.settings.lineups.presets[0].name = '主线突击';
   saveAutomationSettings(accountId, updated.settings, { revision: updated.revision });
   const mobile = await openPage({ width: 390, height: 844 }, true);
-  await mobile.page.getByRole('button', { name: '编辑阵容 主线突击', exact: true }).tap();
+  await mobile.page.getByRole('button', { name: '新建阵容', exact: true }).tap();
   await mobile.page.locator('#saved-lineup-dialog[open][data-lineup-mode="editor"] .lineup-hero').first().waitFor();
+  await mobile.page.getByRole('button', { name: '选择推荐阵容' }).tap();
+  const mobileGuide = mobile.page.getByRole('dialog', { name: '选择推荐阵容' });
+  assert(await mobileGuide.evaluate(dialog => dialog.scrollWidth <= dialog.clientWidth));
+  await mobileGuide.getByRole('button', { name: '使用这套' }).last().tap();
+  await mobileGuide.waitFor({ state: 'detached' });
   await mobile.page.getByRole('button', { name: '关闭阵容编辑器', exact: true }).tap();
   await mobile.page.locator('#saved-lineup-dialog').waitFor({ state: 'detached' });
   await mobile.page.getByRole('button', { name: '查看阵容 主线突击', exact: true }).tap();

@@ -407,6 +407,21 @@ await test('HTML与挑战接线包含编辑入口、单次和连续选择及手�
   assert(!script.includes('innerHTML'));
 });
 
+await test('首次读取阵容只在刷新按钮显示进度，失败后显示原因并可重试', async () => {
+  const f = fixture(), pending = deferred();
+  f.context.redrawLineupEditor = f.realRedraw;
+  f.state.editor = null;
+  f.runtime.response = () => pending.promise;
+  const opening = f.context.openSavedLineupEditor('account-a');
+  const button = label => f.state.ui.root.querySelectorAll('button').find(node => node.textContent === label);
+  assert.equal(button('正在读取…').disabled, true);
+  assert(!f.state.ui.root.querySelectorAll('p').some(node => /读取|排队/.test(node.textContent)));
+  assert.equal(f.state.ui.name.disabled, false);
+  pending.reject(new Error('读取英雄失败')); await opening;
+  assert.match(f.state.ui.root.textContent, /读取英雄失败/);
+  assert.equal(button('刷新英雄与海兽').disabled, false);
+});
+
 await test('编辑弹窗使用阵型下拉框并渲染英雄和海兽，管理列表提供查看且移除绑定', async () => {
   const f = fixture();
   f.draft().formation.petUid = '9223372036854775806';
@@ -427,6 +442,8 @@ await test('编辑弹窗使用阵型下拉框并渲染英雄和海兽，管理�
   assert.match(formationSelect.children[2].textContent, /未解锁/);
   assert.equal(nodes.filter(node => node.className === 'lineup-formation-choice').length, 0);
   assert.equal(nodes.find(node => node.getAttribute('aria-label') === '出战海兽').value, '9223372036854775806');
+  assert.equal(nodes.find(node => node.textContent === '选择推荐阵容').disabled, true);
+  assert.match(f.body.querySelector('dialog').textContent, /当前游戏配置没有推荐阵容/);
   assert.equal(f.body.querySelector('dialog').open, true);
   assert(nodes.some(node => node.getAttribute('role') === 'status'));
 });

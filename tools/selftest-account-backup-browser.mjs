@@ -63,7 +63,20 @@ try {
   assert.equal(backup.accounts[0].settings.settings.loop.everySeconds, 47);
   console.log('通过：直接打开导出、全选与取消全选，多选下载仅包含勾选账号及配置');
 
-  await page.locator('.account-card-menu > summary').first().click();
+  const menuTriggers = page.locator('.account-card-menu > summary');
+  const openMenus = page.locator('.account-card-menu[open]');
+  await menuTriggers.first().click();
+  await menuTriggers.nth(1).click();
+  assert.equal(await openMenus.count(), 1);
+  assert.equal(await menuTriggers.nth(1).evaluate(trigger => trigger.parentElement.open), true);
+  await page.locator('#account-count').click();
+  assert.equal(await openMenus.count(), 0, '点击菜单外部收起更多操作');
+  await menuTriggers.first().click();
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Escape');
+  assert.equal(await openMenus.count(), 0);
+  assert.equal(await menuTriggers.first().evaluate(trigger => trigger === document.activeElement), true);
+  await menuTriggers.first().click();
   await page.locator('[data-account-action="export"]').first().click();
   assert.equal(await page.locator('#account-export-list input:checked').count(), 1);
   const [single] = await Promise.all([page.waitForEvent('download'), page.locator('#account-export-only').click()]);
@@ -108,6 +121,10 @@ try {
   await mobile.goto(root);
   await mobile.locator('#account-picker-title').filter({ hasText: '备份验收船长' }).waitFor();
   await mobile.locator('#tabs [data-tab="account"]').tap();
+  await mobile.locator('.account-card-menu > summary').first().tap();
+  await mobile.locator('.account-card-menu[open] .account-menu-content').waitFor();
+  await mobile.locator('#account-count').tap();
+  assert.equal(await mobile.locator('.account-card-menu[open]').count(), 0);
   await mobile.screenshot({ path: path.join(output, 'account-import-mobile.png'), animations: 'disabled' });
   assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await mobile.locator('#export-accounts').tap();

@@ -2,6 +2,7 @@ import type { StoreApi } from "zustand/vanilla";
 
 export interface ConsoleState {
   currentAccountId: string | null;
+  disconnected: Set<string>;
   accountIds: string[];
   accountsById: Record<
     string,

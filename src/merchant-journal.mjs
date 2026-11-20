@@ -230,11 +230,11 @@ export function merchantJournalSummary(ledger, event, { time = Math.floor(Date.n
   const turnoverObservedAt = confirmedSales.length ? Math.max(...confirmedSales.map(entry => entry.time)) : null;
   const turnoverSampleCount = confirmedSales.length;
   const turnoverSampleSeconds = turnoverObservedAt === null ? 0 : turnoverObservedAt - firstObservedAt;
-  const sampleProfit = confirmedSales.reduce((sum, entry) => sum + entry.metrics.realizedProfit, 0);
+  const sampleProfit = confirmedSales.reduce((sum, entry) => sum + Math.max(0, entry.metrics.realizedProfit), 0);
   return { event, period: event.period, startTime: event.startTime, observedAt, firstObservedAt, sampleSeconds,
     turnoverObservedAt, turnoverSampleCount, turnoverSampleSeconds,
-    turnoverProfitPerSecond: turnoverSampleCount >= 2 && turnoverSampleSeconds >= 60 ? Math.max(0, sampleProfit) / turnoverSampleSeconds : null,
-    turnoverSource: '当前保留观察窗口中至少两笔已核验出售净利润除以截至最近出售的观测耗时；新快照不续期，包括等待时间，不含未知或预期收益',
+    turnoverProfitPerSecond: turnoverSampleCount >= 2 && turnoverSampleSeconds >= 60 ? sampleProfit / turnoverSampleSeconds : null,
+    turnoverSource: '当前窗口内逐笔盈利出售的利润之和除以截至最近一笔已核验出售的观测耗时，含等待时间；亏损仍计入资金净收益',
     status: time >= event.endTime ? 'ended' : time < event.startTime ? 'not-started' : 'active', ...result,
     unknownActions: journal.trades.filter(entry => entry.status === 'unknown').length,
     rejectedActions: journal.trades.filter(entry => ['rejected', 'notSent'].includes(entry.status)).length,

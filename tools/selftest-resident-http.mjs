@@ -81,20 +81,38 @@ export async function testResidentHttp(app) {
   assert.equal(firstView.status, 200);
   assert.equal(firstView.data.autoDeliverOrders, false);
   const [factory, workshop, unknownFactory] = firstView.data.factories;
+  assert.equal(factory.displayName, '食品厂-1');
+  assert.equal(unknownFactory.displayName, '食品厂-2');
+  assert.equal(workshop.displayName, '活动工坊-1');
+  assert.equal(firstView.data.farms[0].displayName, '农田-1');
   assert.equal(factory.capacity, 6);
   assert.equal(factory.queue, 3);
   assert.equal(factory.queueKnown, true);
   assert.equal(factory.auto, '烤鱼');
   assert.equal(factory.autoEnabled, false, '设置目标但自动生产权限过期时显示关闭');
-  assert.deepEqual(factory.jobs, [
-    { index: 5, productId: '烤鱼', name: '烤鱼', finishTime: now + 120 },
-    { index: 6, productId: '烤鱼', name: '烤鱼', finishTime: null },
-    { index: 7, productId: '烤鱼', name: '烤鱼', finishTime: null },
-  ], '服务端提供所有排队产物，缺少结束时间的排队项保留未知时间');
+  assert.deepEqual(factory.jobs.map(({ icon, ...job }) => job), [
+    { index: 5, productId: '烤鱼', name: '烤鱼', finishTime: now + 120, estimatedFinishTime: null },
+    { index: 6, productId: '烤鱼', name: '烤鱼', finishTime: null, estimatedFinishTime: now + 180 },
+    { index: 7, productId: '烤鱼', name: '烤鱼', finishTime: null, estimatedFinishTime: now + 240 },
+  ], '排队完成时间按顺序估算，和服务器计时分开返回');
   assert.equal(workshop.typeName, '活动工坊');
   assert.equal(workshop.queueKnown, true);
   assert.deepEqual(workshop.jobs, []);
   assert.equal(unknownFactory.queueKnown, false, '队列未返回时不能当作已确认的空队列');
+  assert.equal(unknownFactory.plannedJobs, null);
+  const previousPreferences = session.preferences, previousProduce = session.loop.tasks.startProduce;
+  if (previousPreferences) session.preferences = { ...previousPreferences,
+    factory: { ...previousPreferences.factory, enabled: true, produce: true, keepStock: 50 } };
+  session.loop.tasks.startProduce = true;
+  const plannedView = await request('world');
+  session.preferences = previousPreferences;
+  session.loop.tasks.startProduce = previousProduce;
+  assert.equal(plannedView.status, 200);
+  const plannedFactory = plannedView.data.factories[0];
+  assert.deepEqual(plannedFactory.jobs, factory.jobs, '预览排产后游戏仍只有原来的三个任务');
+  assert.deepEqual(plannedFactory.plannedJobs, [300, 360, 420].map(offset => ({
+    productId: '烤鱼', name: '烤鱼', estimatedFinishTime: now + offset,
+  })), '工具拟投产的三件按原队列之后的完成时间单列');
   assert.deepEqual(firstView.data.farms.map(farm => farm.state), ['growing', 'ready', 'idle', 'unknown', 'unknown', 'building', 'unbuilt', 'building']);
   assert.equal(firstView.data.farms[0].productName, '烤鱼');
   assert.equal(firstView.data.farms[0].ripeTime, now + 150);
@@ -102,16 +120,21 @@ export async function testResidentHttp(app) {
   assert.equal(firstView.data.farms[5].finishTime, now + 60);
   assert.equal(firstView.data.farms[7].status, '待竣工');
   autoProduceForever = true;
+  buildings[0].factory.factoryQ[1].productId = '未收录配方';
   const permanentView = await request('world');
   assert.equal(permanentView.status, 200);
   assert.equal(permanentView.data.factories[0].autoEnabled, true, '永久自动生产权限与已设置目标共同开启自动生产');
   assert.equal(permanentView.data.factories[1].autoEnabled, false, '没有设置目标的工厂即使有永久权限也未开启');
+  assert.deepEqual(permanentView.data.factories[0].jobs.slice(1).map(job => job.estimatedFinishTime),
+    [null, null], '前一个排队产物缺少耗时，后续格也应显示待同步');
   autoProduceForever = false;
   autoProduceEndTime = now + 300;
+  buildings[0].factory.factoryQ = [{ idx: 1, productId: '烤鱼' }];
   const timedView = await request('world');
   assert.equal(timedView.status, 200);
   assert.equal(timedView.data.factories[0].autoEnabled, true, '有效期内自动生产权限与已设置目标共同开启自动生产');
   assert.equal(timedView.data.factories[1].autoEnabled, false);
+  assert.equal(timedView.data.factories[0].jobs[0].estimatedFinishTime, null, '首项开工时间待同步时不推算完成时间');
   buildings = [];
   const [first, second] = firstView.data.orders;
   assert(first.orderKey && second.orderKey && first.orderKey !== second.orderKey);

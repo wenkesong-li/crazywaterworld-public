@@ -181,4 +181,87 @@ await test('运行中修改间隔按原等待起点重算下一轮，缩短、�
   }
 });
 
+await test('服务端刷新时间、缺失时的整点兜底和固定轮询分别生效', async () => {
+  const client = new EventEmitter();
+  client.serverClockOffsetMs = 7000;
+  const hour = Date.UTC(2026, 10, 20, 2);
+  let clock = hour - 12000;
+  const scheduler = createLoopScheduler({ client, now: () => clock });
+  const policy = { enabled: () => true, intervalMs: () => 30000 };
+  const treasure = scheduler.scanTask({ ...policy, hourlyFallback: true });
+  const radar = scheduler.scanTask(policy);
+  await treasure.check(() => []);
+  await radar.check(() => []);
+  assert.equal(treasure.nextAt(), hour - 7000);
+  assert.equal(radar.nextAt(), clock + 30000);
+  clock = treasure.nextAt();
+  const refresh = hour / 1000 + 8;
+  await treasure.check(() => [refresh]);
+  client.serverClockOffsetMs += 500;
+  assert.equal(treasure.nextAt(), refresh * 1000 - client.serverClockOffsetMs);
+  clock = treasure.nextAt();
+  await treasure.check(() => [refresh]); // 旧批次仍返回刚经过的刷新点
+  assert.equal(treasure.nextAt(), clock + 30000);
+  assert.equal(await radar.check(() => assert.fail('固定周期未到')), false);
+  scheduler.dispose();
+});
+
+await test('心跳校时提前刷新期限时立即结束旧等待', async () => {
+  const f = fixture();
+  const scan = f.scheduler.scanTask({ enabled: () => true, intervalMs: () => 60000 });
+  await scan.check(() => [30]);
+  const wait = f.scheduler.waitUntil(scan.nextAt());
+  f.scheduler.wakeIfEarlier(scan.nextAt());
+  assert.equal(f.sleeps[0].signal.aborted, false);
+  f.client.serverClockOffsetMs = 5000;
+  f.scheduler.wakeIfEarlier(scan.nextAt());
+  assert.equal(await wait, true);
+  assert.equal(scan.nextAt(), 25000);
+  f.scheduler.dispose();
+});
+
+await test('在途推送合并为一次补扫，跨过已知边界会立即复查', async () => {
+  let clock = 10000, reads = 0;
+  const scheduler = createLoopScheduler({ client: new EventEmitter(), now: () => clock });
+  const scan = scheduler.scanTask({ enabled: () => true, intervalMs: () => 60000 });
+  await scan.check(() => { reads++; clock = 12000; return [11]; });
+  assert.equal(scan.nextAt(), 11000);
+  await scan.check(async () => {
+    reads++;
+    for (let n = 0; n < 10; n++) scan.invalidate();
+    assert.equal(await scan.check(() => assert.fail('扫描重入')), false);
+    return [11];
+  });
+  await scan.check(() => { reads++; return [11]; });
+  assert.equal(reads, 3);
+  assert.equal(scan.nextAt(), 72000);
+  scheduler.dispose();
+  assert.equal(scan.nextAt(), Infinity);
+});
+
+await test('让出账号队列后暂停会取消待扫描任务和剩余主轮步骤', async () => {
+  const client = new EventEmitter(), stop = new AbortController(), events = [];
+  let due = false, slots = 0;
+  const scheduler = createLoopScheduler({
+    client, stop: stop.signal,
+    schedule: async work => {
+      if (++slots === 2) stop.abort();
+      return work();
+    },
+  });
+  async function* steps() {
+    try {
+      events.push('first');
+      due = true;
+      yield;
+      events.push('second');
+    } finally { events.push('closed'); }
+  }
+  await scheduler.runSteps(steps(), {
+    nextAt: () => due ? 0 : Infinity, runPending: () => events.push('scan'), afterStep: () => {},
+  });
+  assert.equal(slots, 2);
+  assert.deepEqual(events, ['first', 'closed']);
+});
+
 console.log('循环调度离线专项 ' + passed + '/' + passed + ' 通过');

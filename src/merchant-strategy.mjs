@@ -37,7 +37,7 @@ async function inventory(client) {
   if (!natural(count) || !natural(diamonds)) throw Error('指针或钻石余额无效');
   return { count, diamonds };
 }
-export async function buyMerchantPointers(client, config, ctx, event, state, desiredStock, validPlan) {
+export async function buyMerchantPointers(client, config, ctx, event, state, purchasePlan, validPlan) {
   const complete = settings(ctx), policy = complete.merchant ?? {}, ledger = ctx.ledger;
   if (!ledger || !policy.autoBuyPointers || !policy.autoSpeedUp) return false;
   const report = entry => ctx.report({ label: '海商王 · 补足商会指针', ...entry });
@@ -61,20 +61,26 @@ export async function buyMerchantPointers(client, config, ctx, event, state, des
     if (complete.resources?.allowDiamonds !== true) return skip('未开启全局钻石消费');
     const max = Number(table(config, 'ActivityTradeCfg').find(row => row.key === '海商王加速日购买上限')?.value);
     const price = table(config, 'ItemPriceCfg').find(row => row.itemId === pointer)?.rubyPrice;
-    if (!positive(price) || !natural(max) || !positive(desiredStock)) return skip('指针价格或游戏购买上限未确认');
+    if (!positive(price) || !natural(max)) return skip('指针价格或游戏购买上限未确认');
     const fresh = await read(client, 'TradeInfo'), stock = await inventory(client);
-    const count = desiredStock - stock.count, bought = fresh.player?.buySpeedTimes;
-    if (count <= 0) return false;
+    const bought = fresh.player?.buySpeedTimes;
     if (fresh.period !== event.period || !natural(bought) || !allowed() ||
       JSON.stringify(fresh.cargo) !== JSON.stringify(state.cargo) || JSON.stringify(fresh.player.goods) !== JSON.stringify(state.player.goods)) return skip('购买前航程、库存或设置已变化');
-    if (bought + count > max) return skip('游戏每日指针购买额度不足，不做无效的部分购买');
-    const cost = count * price, resources = complete.resources;
-    if (stock.diamonds - cost < resources.diamondThreshold) return skip('购买后钻石不足保留量');
+    const resources = complete.resources, spent = ledger.snapshot().counters;
+    const budget = Math.min(stock.diamonds - resources.diamondThreshold, resources.diamondDailyLimit - (spent.diamonds ?? 0),
+      (policy.pointerDailyDiamondLimit ?? 0) - (spent.merchantPointerDiamonds ?? 0));
+    const affordable = Math.min(Math.floor(budget / price), max - bought);
+    if (!positive(affordable)) return false;
+    const radar = await read(client, 'TradeGuildRadar');
+    if (!allowed()) return skip('补购前商情或设置已变化');
+    const choice = purchasePlan(fresh, stock.count, stock.count + affordable, radar);
+    if (!choice || !positive(choice.count) || choice.count > affordable) return false;
+    const count = choice.count, cost = count * price;
     const key = scope + ':' + event.startTime + ':' + event.period + ':' + today + ':' + bought;
     const details = { scope, day: today, period: event.period, startTime: event.startTime, buyTimes: bought, count, beforeCount: stock.count };
     const ticket = ledger.reserve({ diamonds: cost, merchantPointerDiamonds: cost },
       { diamonds: resources.diamondDailyLimit, merchantPointerDiamonds: policy.pointerDailyDiamondLimit ?? 0 }, {}, { uniqueKey: key, details });
-    if (!allowed()) { ledger.cancel(ticket); return skip('购买前加速方案或开关变化'); }
+    if (!allowed() || clock(client) > choice.expiresAt) { ledger.cancel(ticket); return skip('购买前加速方案或开关变化'); }
     let reply;
     try { reply = await client.request('TradeBuySpeedItemRequest', { buyNum: count }, 'TradeBuySpeedItemResponse'); }
     catch (error) {

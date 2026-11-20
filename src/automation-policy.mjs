@@ -84,7 +84,7 @@ export function nativePreferenceEnabled(settings, key) {
     fishEnhance: () => settings.loop.world && settings.gather.upgradeFishing,
     diveEnhance: () => settings.loop.world && settings.gather.upgradeDiving,
     salvageEnhance: () => settings.loop.world && settings.gather.upgradeSalvage,
-    dailyRewards: () => settings.dailies.enabled && settings.dailies.claimTasks,
+    dailyRewards: () => settings.dailies.enabled && (settings.dailies.claimTasks || settings.arena?.claimTask || settings.league?.claimTask),
     chests: () => settings.dailies.enabled && (settings.dailies.claimDailyChest || settings.dailies.claimWeeklyChest),
     gift: () => settings.dailies.enabled && settings.dailies.claimGift,
     tasks: () => settings.loop.tasks || (settings.loop.world && settings.resident.rewards),
@@ -113,10 +113,17 @@ export function resourceReserve(settings, id) {
   return 0;
 }
 
+export function factoryItemSpeedEnabled(factory, productId) {
+  return factory.speedUp && (!factory.speedUpItems.length || factory.speedUpItems.includes(productId));
+}
+
 export function worldActionAllowed(settings, step, config) {
   if (!settings) return true;
   if (!worldPreferenceEnabled(settings, step.kind)) return false;
-  if (step.demandSources?.length && !step.demandSources.some(source => activityProductionEnabled(settings, source))) return false;
+  if (step.kind === 'speedUpProduce' && step.verify?.productId) {
+    if (!factoryItemSpeedEnabled(settings.factory, step.verify.productId) && !step.demandSources?.some(source =>
+      settings.factory.speedUpSources.includes(source) && activityProductionEnabled(settings, source))) return false;
+  } else if (step.demandSources?.length && !step.demandSources.some(source => activityProductionEnabled(settings, source))) return false;
   const id = step.body?.buildingId;
   const type = typeof id === 'string' ? (config?.tables?.BuildingCfg?.data ?? []).map(row => row.buildingType).sort((a, b) => b.length - a.length).find(t => id.endsWith(t)) : null;
   if (['build', 'upgrade', 'weekFactory'].includes(step.kind) && settings.building.disabledTypes.some(value => value === id || value === type)) return false;

@@ -60,10 +60,35 @@ export function cityDispatchObserved(fleet, details) {
       (details.manualCityMove && details.origin > 0 && details.origin !== details.cityId && fleetAtHome(fleet))));
 }
 
+// 服务端巨轮返航保留货轮 UID，起点是货轮格，目标城池与舰队所属城池一致。
+export function isTreasureReturn(fleet) {
+  return fleet?.state === 2 && fleet.treasureLootUid > 0 && fleet.cityId > 0 &&
+    fleet.targetCityId === fleet.cityId && fleet.startGridIdx > 0 && fleet.targetGridIdx > 0 &&
+    fleet.startGridIdx !== fleet.targetGridIdx;
+}
+
+export function matchesTreasureReturn(fleet, dispatch) {
+  return isTreasureReturn(fleet) && !dispatch?.returnClosed && dispatch?.cargoGridIdx === fleet.startGridIdx &&
+    fleet.moveStartTs >= dispatch.sentAt && fleet.moveStartTs >= (dispatch.moveStartTs ?? 0) &&
+    (dispatch.returnStartTs == null || fleet.moveStartTs === dispatch.returnStartTs);
+}
+
+export function treasureDispatchEvidence(details, fleet) {
+  if (isTreasureReturn(fleet)) return { ...details, returnStartTs: fleet.moveStartTs };
+  return { ...details, moveStartTs: fleet.moveStartTs, targetGridIdx: fleet.targetGridIdx };
+}
+
+export function matchesTreasureSpeedLeg(fleet, details) {
+  if (fleet?.state !== 2 || fleet.treasureLootUid !== details.uid ||
+      !integer(details.moveStartTs) || details.moveStartTs <= 0 ||
+      fleet.moveStartTs !== details.moveStartTs || fleet.targetGridIdx !== details.targetGridIdx) return false;
+  if (details.direction === 'return') return isTreasureReturn(fleet) &&
+    fleet.startGridIdx === details.startGridIdx && fleet.targetCityId === details.targetCityId;
+  return !(fleet.targetCityId > 0);
+}
+
 export function treasureSpeedConfirmed(fleet, details) {
-  return integer(details.moveStartTs) && details.moveStartTs > 0 &&
-    fleet?.treasureLootUid === details.uid && fleet.targetGridIdx === details.targetGridIdx &&
-    fleet.moveStartTs === details.moveStartTs && integer(fleet.moveEndTs) &&
+  return matchesTreasureSpeedLeg(fleet, details) && integer(fleet.moveEndTs) &&
     fleet.moveEndTs >= details.moveStartTs && fleet.moveEndTs < details.beforeEnd;
 }
 
@@ -132,7 +157,7 @@ export function outstandingFleets(records, worldId) {
       d.kind === 'treasureSpeed' ||
       d.kind === 'citySlot' ||
       d.kind === 'cityDispatch' ||
-      (d.kind === 'treasureDispatch' && !r.confirmed)
+      (d.kind === 'treasureDispatch' && (!r.confirmed || (d.cargoGridIdx > 0 && !d.returnClosed)))
     );
   });
 }
@@ -359,7 +384,7 @@ export function settleFleetSnapshot(
         d.uid > 0 &&
         exactAutomationId(fleet.treasureLootUid) === exactAutomationId(d.uid)
       ) {
-        ledger.resolveKey(key, true);
+        ledger.resolveKey(key, true, treasureDispatchEvidence(d, fleet));
         changes.push({ key, reason: '确认货轮派遣' });
       } else if (
         !r.confirmed &&
@@ -371,6 +396,16 @@ export function settleFleetSnapshot(
         // 已消失的目标无法继续占用归队舰队。是否扣费仍未知，按原规则保留预算。
         ledger.resolveKey(key, false);
         changes.push({ key, reason: '货轮目标消失且舰队已归队' });
+      } else if (r.confirmed && d.cargoGridIdx > 0 && !d.returnClosed) {
+        // 参与记录可长期保留用于防重，但只能为本次派遣的一段回城航程付费。
+        const returning = isTreasureReturn(fleet);
+        const sameMove = returning ? matchesTreasureReturn(fleet, d)
+          : fleet.moveStartTs === d.moveStartTs && fleet.targetGridIdx === d.targetGridIdx && d.returnStartTs == null;
+        if (home || fleet.treasureLootUid !== d.uid || (fleet.state === 2 && !sameMove)) {
+          ledger.updateKeyDetails(key, { ...d, returnClosed: true });
+        } else if (returning && d.returnStartTs == null) {
+          ledger.updateKeyDetails(key, { ...d, returnStartTs: fleet.moveStartTs });
+        }
       }
       continue;
     }
@@ -500,7 +535,7 @@ export async function checkFleetSettlement(client, player, ledger, { afterPush =
       read('MyFleets'),
       kinds.has('radarSend') ? read('RadarInfo') : null,
       kinds.has('pirateFirst') ? read('PirateKillRecord') : null,
-      kinds.has('treasureDispatch') ? read('TreasureLootList') : null,
+      outstanding.some(([, r]) => r.details.kind === 'treasureDispatch' && !r.confirmed) ? read('TreasureLootList') : null,
       kinds.has('resourceFieldDispatch') ? read('MyResFields') : null
     ]);
     if (!Array.isArray(own?.fleets) || !sameOwner() || client.connected === false) {

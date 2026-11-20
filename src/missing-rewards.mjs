@@ -183,11 +183,14 @@ export async function claimLeagueCollect(client,config,{enabled,ledger,report}){
   }
  }finally{leagueCollectActive.delete(client);}
 }
-export async function claimLeaguePass(client,config,{enabled,ledger,report}){
- const label='积分赛战令奖励',league=await read(client,'LeagueInfo'),state=await read(client,'LeagueBattlePassInfo');
+export function claimableLeaguePassTiers(config,league,state){
  if(!integer(state.score)||!Array.isArray(state.got)||!integer(league.roomDan)||!integer(league.settleTime))throw Error('积分赛战令状态未确认');
  const tiers=rows(config,'LeaguePassCfg').filter(r=>r.dan===league.roomDan&&r.reqScore<=state.score);
- const claimable=tiers.filter(t=>{const got=state.got.find(r=>r.id===t.rwdId);return t.freeReward?.length&&!got?.freeGot||state.activePay&&t.payReward?.length&&!got?.payGot;});
+ return tiers.filter(t=>{const got=state.got.find(r=>r.id===t.rwdId);return t.freeReward?.length&&!got?.freeGot||state.activePay&&t.payReward?.length&&!got?.payGot;});
+}
+export async function claimLeaguePass(client,config,{enabled,ledger,report}){
+ const label='积分赛战令奖励',league=await read(client,'LeagueInfo'),state=await read(client,'LeagueBattlePassInfo');
+ const claimable=claimableLeaguePassTiers(config,league,state);
  if(!claimable.length)return wait(report,label,'当前积分 '+state.score+'，暂无可领取档位');
  await claimOnce(client,{ledger,key:'league-pass:'+league.settleTime+':'+league.roomDan+':'+state.activePay+':'+signature(claimable.map(t=>t.rwdId)),title:label,request:'LeagueGotPassRewardRequest',response:'LeagueGotPassRewardResponse',enabled,report,verify:async r=>{
   const after=await read(client,'LeagueBattlePassInfo');return reward(r)&&claimable.every(t=>{const got=after.got?.find(g=>g.id===t.rwdId);return (!t.freeReward?.length||got?.freeGot)&&(!state.activePay||!t.payReward?.length||got?.payGot);});

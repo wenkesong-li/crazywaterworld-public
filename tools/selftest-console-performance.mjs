@@ -14,6 +14,7 @@ process.env.CW_CONFIG_PACK = path.join(dir, 'config.json');
 fs.writeFileSync(process.env.CW_CONFIG_PACK, '[]');
 
 const { GameClient } = await import('../src/client.mjs');
+const { createLoopScheduler } = await import('../src/loop-scheduler.mjs');
 const { loadProtocol } = await import('../src/proto.mjs');
 const { decodePng, encodePng, cropIcon, shrink, iconThumb } = await import('../src/art-thumbs.mjs');
 const { saveStore } = await import('../src/accounts.mjs');
@@ -131,6 +132,55 @@ await test('暂停发生在插入读取期间，未发送的城池操作明确�
   respond('MonthCardResponse');
   await Promise.all([read, assert.rejects(watch, error => error.notSent && /暂停/.test(error.message))]);
   assert.deepEqual(sent, ['MonthCardRequest']);
+});
+
+await test('主轮跨扫描期限时等待在途回包，并发查货轮和宣战，整批结束后再放行普通请求', async () => {
+  const { client, sent, respond } = makeClient();
+  const scheduler = createLoopScheduler({ client });
+  const until = async predicate => {
+    const deadline = Date.now() + 2000;
+    while (!predicate() && Date.now() < deadline) await sleep(2);
+    assert(predicate(), '等待模拟连接上的事件超时');
+  };
+  const scans = ['TreasureLootList', 'WarDeclaration'].map(stem => scheduler.scanTask({
+    enabled: () => true, intervalMs: () => 60000,
+    observe: () => client.request(stem + 'Request', {}, stem + 'Response', 1000).then(() => []),
+  }));
+  let resume, stepEnded = false;
+  const paused = new Promise(resolve => { resume = resolve; });
+  async function* steps() {
+    await client.request('AllItemRequest', {}, 'AllItemResponse');
+    await paused;
+    stepEnded = true;
+    yield;
+  }
+  const nextAt = () => Math.min(...scans.map(scan => scan.nextAt()));
+  let first = true;
+  const runPending = async () => {
+    const boundary = first ? [(Math.floor(Date.now() / 1000) + 1)] : [];
+    first = false;
+    for (const scan of scans) await scan.check(() => boundary);
+  };
+  const main = scheduler.runSteps(steps(), { nextAt, runPending, afterStep() {} });
+  try {
+    await until(() => client.readGate !== null);
+    assert.deepEqual(sent, ['AllItemRequest']);
+    respond('AllItemResponse');
+    await until(() => sent.includes('WarDeclarationRequest'));
+    assert.deepEqual(sent, ['AllItemRequest', 'TreasureLootListRequest', 'WarDeclarationRequest']);
+    assert.equal(stepEnded, false);
+    const next = client.request('MyFleetsRequest', {}, 'MyFleetsResponse');
+    client.attributePrompt({ args: ['模拟查询被拒'] });
+    await sleep(5);
+    assert(!sent.includes('MyFleetsRequest'), '单条读取失败后仍应等待同批另一条回包');
+    respond('WarDeclarationResponse');
+    await until(() => sent.includes('MyFleetsRequest'));
+    respond('MyFleetsResponse'); await next;
+  } finally {
+    resume();
+    await main;
+    scheduler.dispose();
+  }
 });
 
 // ---- 控制台路由 ----

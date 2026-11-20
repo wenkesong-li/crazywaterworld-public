@@ -115,7 +115,7 @@ function confirmed(details, snapshot) {
   return false;
 }
 
-export function planAntiqueUpgrade(snapshot, config, settings, { usage = { counters: {} }, keys = {} } = {}) {
+export function planAntiqueUpgrade(snapshot, config, settings, { keys = {} } = {}) {
   const p = settings?.antique;
   const plan = { actions: [], notes: [], antiques: snapshot.antiques, suits: snapshot.suits, masterLv: snapshot.masterLv,
     gold: snapshot.gold, reason: snapshot.reason };
@@ -126,8 +126,6 @@ export function planAntiqueUpgrade(snapshot, config, settings, { usage = { count
   if (!hasAntiqueActions(p)) { plan.notes.push('未开启任何藏品养成动作'); return plan; }
   const balances = new Map(snapshot.items);
   let gold = snapshot.gold;
-  let spent = usage.counters.antiqueGold ?? 0;
-  if (!integer(spent)) { plan.notes.push('藏品当日金币用量记录异常'); return plan; }
   const owned = new Map(snapshot.antiques.map(row => [row.id, { ...row }]));
   const suits = new Map(snapshot.suits.map(row => [row.id, { ...row }]));
   let masterLv = snapshot.masterLv;
@@ -245,8 +243,8 @@ export function planAntiqueUpgrade(snapshot, config, settings, { usage = { count
         if (itemCosts.some(cost => (balances.get(cost.id) ?? 0) < cost.num)) { plan.notes.push(suitName(config, suitId) + '：升级材料不足'); break; }
         const goldCost = costs.find(cost => cost.id === 'GOLD')?.num ?? 0;
         if (!integer(gold, 0) || !snapshot.goldSynced) { plan.notes.push('金币扣款尚未同步，暂停套装升级'); break; }
-        if (gold - goldCost < p.goldReserve || (p.dailyGoldLimit > 0 && spent + goldCost > p.dailyGoldLimit)) {
-          plan.notes.push(suitName(config, suitId) + '：金币不足或会低于保留量/日预算');
+        if (gold < goldCost) {
+          plan.notes.push(suitName(config, suitId) + '：金币不足');
           break;
         }
         plan.actions.push({ kind: 'antiqueSuit', request: 'AntiqueSuitLevelUpRequest', body: { id: suitId }, suitId,
@@ -254,7 +252,6 @@ export function planAntiqueUpgrade(snapshot, config, settings, { usage = { count
           label: '藏品套装' + suitName(config, suitId) + '升到 ' + target + ' 级' });
         for (const cost of itemCosts) balances.set(cost.id, (balances.get(cost.id) ?? 0) - cost.num);
         gold -= goldCost;
-        spent += goldCost;
         level = target;
         count++;
       }
@@ -299,14 +296,14 @@ export async function runAntiqueUpgrade(client, protocol, config, player, { getS
     const snapshot = await read();
     const settings = getSettings();
     reconcile(snapshot, ledger, report);
-    const plan = planAntiqueUpgrade(snapshot, config, settings, { usage: ledger.snapshot(), keys: ledger.keyRecords() });
+    const plan = planAntiqueUpgrade(snapshot, config, settings, { keys: ledger.keyRecords() });
     for (const proposed of plan.actions) {
       if (!enabled() || !antiqueEnabled(getSettings()) || !client.connected) break;
       const current = getSettings();
       if (current !== settings) break;
       const fresh = await read();
       if (fresh.reason) { plan.notes.push(fresh.reason); break; }
-      const reviewed = planAntiqueUpgrade(fresh, config, settings, { usage: ledger.snapshot(), keys: ledger.keyRecords() });
+      const reviewed = planAntiqueUpgrade(fresh, config, settings, { keys: ledger.keyRecords() });
       const step = reviewed.actions.find(row => row.uniqueKey === proposed.uniqueKey && row.kind === proposed.kind);
       if (!step || !enabled() || settings !== getSettings() || !client.connected) continue;
       if (ledger.hasKey(step.uniqueKey)) continue;
@@ -327,9 +324,8 @@ export async function runAntiqueUpgrade(client, protocol, config, player, { getS
       }
       let ticket;
       try {
-        ticket = ledger.reserve(step.goldCost > 0 ? { antiqueGold: step.goldCost } : {},
-          step.goldCost > 0 && settings.antique.dailyGoldLimit > 0 ? { antiqueGold: settings.antique.dailyGoldLimit } : {},
-          {}, { uniqueKey: step.uniqueKey, details: detailsOf(step, fresh.now) });
+        ticket = ledger.reserve(step.goldCost > 0 ? { antiqueGold: step.goldCost } : {}, {}, {},
+          { uniqueKey: step.uniqueKey, details: detailsOf(step, fresh.now) });
       } catch (error) {
         cancelUnsentGold(goldTicket);
         report({ step, skipped: true, error: error.message });

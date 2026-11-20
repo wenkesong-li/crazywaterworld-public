@@ -4,11 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { createUsageLedger, defaultSettings, validateSettings } from '../src/automation-settings.mjs';
-import { readSiliconMining, planSiliconMining, runSiliconMining, watchSiliconMining, siliconInWindow, siliconInterval, siliconRepairDiamondCost } from '../src/silicon-mining.mjs';
+import { readSiliconMining, planSiliconMining, planSiliconMaintenance, previewSiliconEventRecall, recallSiliconForEvent, runSiliconMining, watchSiliconMining, siliconInWindow, siliconInterval } from '../src/silicon-mining.mjs';
 import { fleetRecordReason, fleetDispatchView, bridgeFleetReservations, reserveDispatch } from '../src/fleet-availability.mjs';
 import { registerFleetReservations } from '../src/fleet-reservations.mjs';
 import { pendingPetrol } from '../src/dispatch-preview.mjs';
-import { watchFleetSpeed } from '../src/fleet-speed.mjs';
 import { siliconFixture, siliconSettings } from './fixtures/silicon.mjs';
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-silicon-')), results = []; let seq = 0;
 const usage = f => createUsageLedger('虚构硅矿账号', { file: path.join(dir, String(++seq) + '.json'), now: () => Date.now() + f.client.serverClockOffsetMs });
@@ -16,12 +15,21 @@ const read = (f, s, ledger) => readSiliconMining(f.client, f.protocol, f.config,
 const plan = async (f, s, ledger) => planSiliconMining(await read(f, s, ledger), s, ledger, f.client);
 const run = (f, s, ledger, options = {}) => runSiliconMining(f.client, f.protocol, f.config, f.player, { getSettings: () => s, ledger, enabled: () => true, ...options });
 const hunt = (s, players = ['名单目标'], retreat = 'never', index = 0) => Object.assign(s.silicon.fleets[index], { huntEnabled: true, huntPlayers: players, huntRetreat: retreat, emptyOnly: false });
+function startMineReturn(f, id = '1远征船', gridId = 5000) {
+  f.returnFleet(id);
+  const time = Math.floor((Date.now() + f.client.serverClockOffsetMs) / 1000);
+  Object.assign(f.state.fleets.find(fleet => fleet.buildingId === id), {
+    state: 2, startGridIdx: gridId, targetGridIdx: 700, cityId: 7, targetCityId: 7, moveStartTs: time, moveEndTs: time + 180,
+  });
+}
 const test = async (name, body) => { try { await body(); results.push(true); console.log('通过：' + name); } catch (error) { results.push(false); console.error('失败：' + name + '\n' + error.stack); } };
 try {
   await test('新配置默认禁用，三舰队参数可独立校验及保留', () => {
     const defaults = defaultSettings(); assert.equal(defaults.silicon.enabled, false); assert(defaults.silicon.fleets.every(fleet => !fleet.enabled));
     const s = siliconSettings(); s.silicon.fleets[1].safePlayers = ['盟友']; assert.deepEqual(validateSettings(s).silicon.fleets[1].safePlayers, ['盟友']);
-    s.silicon.fleets[1].tier = 'RED'; assert.throws(() => validateSettings(s));
+    for (const invalid of [['RED'], ['BLUE', 'BLUE'], 'BLUE']) {
+      s.silicon.fleets[1].tiers = invalid; assert.throws(() => validateSettings(s));
+    }
   });
   await test('读状态和预览无写入；协议真实往返保留大整数角色', async () => {
     const f = siliconFixture(), s = siliconSettings(), ledger = usage(f), snapshot = await read(f, s, ledger);
@@ -89,8 +97,31 @@ try {
     assert.equal((await plan(f, s, ledger)).actions.length, 0);
     s.silicon.fleets[0].safePlayers = []; assert.equal((await plan(f, s, ledger)).actions[0].opponent.nickname, '敌方船长');
     f.state.positions[5000].pop(); assert.equal((await plan(f, s, ledger)).actions[0].opponent, null);
-    s.silicon.fleets[0].tier = 'BLUE'; for (let i = 0; i < 3; i++) f.enemy(i, '低矿敌人' + i, 10, 8, 3000);
+    s.silicon.fleets[0].tiers = ['BLUE']; for (let i = 0; i < 3; i++) f.enemy(i, '低矿敌人' + i, 10, 8, 3000);
     assert.equal((await plan(f, s, ledger)).actions.length, 0);
+  });
+  await test('多选等级任一有空位即派遣，未选等级和空选均不派遣', async () => {
+    for (const openGrid of [4000, 5000]) {
+      const f = siliconFixture(), s = siliconSettings(), ledger = usage(f), fleet = s.silicon.fleets[0];
+      fleet.tiers = ['PURPLE', 'ORANGE']; fleet.emptyOnly = true;
+      const fullGrid = openGrid === 4000 ? 5000 : 4000;
+      for (let i = 0; i < 3; i++) f.enemy(i, '占矿玩家' + i, 900, 8, fullGrid);
+      await run(f, s, ledger);
+      assert.deepEqual(f.client.writes.map(write => write.body.gridId), [openGrid]);
+    }
+    const f = siliconFixture(), s = siliconSettings(), ledger = usage(f);
+    s.silicon.fleets[0].tiers = [];
+    await run(f, s, ledger); assert.equal(f.client.writes.length, 0);
+  });
+  await test('混选时初等矿只占空位，中等矿仍可抢占', async () => {
+    const f = siliconFixture(), s = siliconSettings(), ledger = usage(f);
+    s.silicon.fleets[0].tiers = ['BLUE', 'PURPLE'];
+    for (let i = 0; i < 3; i++) {
+      f.enemy(i, '初等玩家' + i, 999, 8, 3000);
+      f.enemy(i, '中等玩家' + i, 800, 8, 4000);
+    }
+    await run(f, s, ledger);
+    assert.deepEqual(f.client.writes.map(write => write.body.gridId), [4000]);
   });
   await test('服务器全局30次与每舰日抢占限制同时生效', async () => {
     const f = siliconFixture(), s = siliconSettings(), ledger = usage(f); s.silicon.fleets[0].emptyOnly = false; for (let i = 0; i < 3; i++) f.enemy(i, '敌人' + i);
@@ -151,51 +182,132 @@ try {
       assert.equal(f.state.fuel, fuel - 400);
     }
   });
-  await test('普通维修与钻石维修加速均有真实业务确认和预算', async () => {
-    const f = siliconFixture(), s = siliconSettings(), ledger = usage(f); s.silicon.fleets[0].autoRepair = true; s.silicon.fleets[0].maxRepairCost = 1; s.silicon.petrolReserve = 50000; s.silicon.dailyPetrolLimit = 1; s.silicon.fleets[0].repairSpeedUp = true; f.state.fleets[0].durability = 0;
-    await run(f, s, ledger); assert.deepEqual(f.client.writes.map(row => row.name), ['RepairFleetRequest']);
-    await run(f, s, ledger); assert.equal(f.client.writes.length, 1);
-    s.resources.allowDiamonds = true; s.silicon.dailyDiamondLimit = 1000; await run(f, s, ledger);
-    assert.equal(f.client.writes.at(-1).name, 'SpeedUpRepairRequest'); assert(ledger.snapshot().counters.siliconDiamonds > 0); assert.equal(ledger.snapshot().uncertain, 0);
+  await test('提前召回只读预览、在途防重与临发送前改期或矿位变化', async () => {
+    for (const change of ['unknown', 'rescheduled', 'leftMine', 'disabled']) {
+      const f = siliconFixture(), s = siliconSettings(), ledger = usage(f);
+      s.silicon.enabled = false;
+      Object.assign(s.cityWar, { enabled: true, recallSilicon: true, recallLeadMinutes: 1, fleetIds: ['1远征船'] });
+      f.occupy('1远征船',5000,0,1);
+      const start = Math.floor(Date.now()/1000) + 45, source = 'cityWar';
+      const previous = ledger.keyRecords();
+      const preview = await previewSiliconEventRecall(f.client, f.protocol, f.config, f.player, s, ledger, source, start, f.state.fleets);
+      assert.deepEqual(preview.actions.map(a => a.request), ['ChipMineRetreatRequest']);
+      assert.deepEqual(f.client.writes, []); assert.deepEqual(ledger.keyRecords(), previous);
+      const recall = () => recallSiliconForEvent(f.client, f.protocol, f.config, f.player, { source, fleetIds: s.cityWar.fleetIds,
+        getSettings: () => s, enabled: () => true, recallCurrent: () => s.cityWar.recallSilicon, ledger, report() {},
+        verifyStart: async () => {
+          if (change === 'leftMine') f.state.fleets[0].curGridIdx++;
+          if (change === 'disabled') s.cityWar.recallSilicon = false;
+          return change !== 'rescheduled';
+        } });
+      f.unknown = true; await recall(); await recall();
+      assert.equal(f.client.writes.length, change === 'unknown' ? 1 : 0, change);
+      assert.equal(!!ledger.keyRecords()['silicon-retreat:3001001:1'], change === 'unknown');
+    }
   });
-  await test('行军加速保留总开关和模块预算，按新行军结束时间确认', async () => {
+  await test('提前窗口内自动占矿避开所选舰队，窗口结束后恢复', async () => {
+    const f = siliconFixture(), s = siliconSettings(), ledger = usage(f);
+    s.silicon.fleets[1].enabled = true;
+    await run(f, s, ledger, { heldForEvent: id => id === '1远征船' });
+    assert.deepEqual(f.client.writes.map(w => w.body.fleetId), ['2远征船']);
+    await run(f, s, ledger, { heldForEvent: () => false });
+    assert.deepEqual(f.client.writes.map(w => w.body.fleetId), ['2远征船','1远征船']);
+  });
+  await test('旧硅矿维修加速配置只会触发普通维修，预览与挂机均不为维修花钻', async () => {
+    const f = siliconFixture(), s = siliconSettings(), ledger = usage(f);
+    Object.assign(s.silicon.fleets[0], { autoRepair: true, repairSpeedUp: true, repairDailyDiamonds: 1000,
+      marchSpeedUp: true, marchDailyDiamonds: 1000, returnSpeedUp: true, returnDailyDiamonds: 1000 });
+    s.resources.allowDiamonds = true; f.state.fleets[0].durability = 0;
+    await run(f, s, ledger);
+    assert.equal(await planSiliconMaintenance(f.client, f.protocol, f.config, s, ledger, await read(f, s, ledger)), null);
+    await run(f, s, ledger);
+    assert.deepEqual(f.client.writes.map(row => row.name), ['RepairFleetRequest']);
+    assert.equal(ledger.snapshot().counters.diamonds ?? 0, 0);
+    assert(ledger.confirmedCounters().siliconPetrol > 0);
+  });
+  await test('去程加速遵守钻石总开关和本队去程预算，按新行军结束时间确认', async () => {
     const f = siliconFixture(), s = siliconSettings(), ledger = usage(f); s.silicon.fleets[0].marchSpeedUp = true; await run(f, s, ledger); assert.equal(f.client.writes.length, 1);
-    s.resources.allowDiamonds = true; s.silicon.dailyDiamondLimit = 30; await run(f, s, ledger); assert.equal(f.client.writes.at(-1).name, 'SpeedUpFleetRequest');
+    s.resources.allowDiamonds = true; s.silicon.fleets[0].marchDailyDiamonds = 30; await run(f, s, ledger); assert.equal(f.client.writes.at(-1).name, 'SpeedUpFleetRequest');
     await run(f, s, ledger); assert.equal(f.client.writes.length, 2); assert.equal(ledger.snapshot().counters.diamonds, 30);
   });
-  await test('硅矿维修发送同步推进城战费率，推送迟到也不能沿用旧分钟', async () => {
-    const f = siliconFixture(), s = siliconSettings(), ledger = usage(f), speed = watchFleetSpeed(f.client);
-    Object.assign(s.silicon.fleets[0], { autoRepair: true, repairSpeedUp: true, minDurabilityPercent: 100 });
-    f.state.fleets[0].durability = 1970; f.state.repairMinutes = 59; await run(f, s, ledger);
-    f.client.emit('message', { name: 'SCSpeedUp', body: { data: [{ type: 4, minutes: 59 }] } });
-    s.resources.allowDiamonds = true; s.silicon.dailyDiamondLimit = 10; await run(f, s, ledger);
-    assert.equal(f.client.writes.at(-1).name, 'SpeedUpRepairRequest'); assert.equal(speed.minutes(), 60);
-    assert.equal(watchSiliconMining(f.client).repairMinutes(), 60); assert.equal(ledger.snapshot().counters.diamonds, 10);
-    assert.equal(5000-f.state.ruby,10);
-  });
-  await test('硅矿最终读取期间费率上涨，旧10钻报价不得发出11钻请求', async () => {
-    const f = siliconFixture(), s = siliconSettings(), ledger = usage(f);
-    Object.assign(s.silicon.fleets[0], { autoRepair: true, repairSpeedUp: true, minDurabilityPercent: 100 });
-    f.state.fleets[0].durability = 1970; await run(f, s, ledger);
-    f.client.emit('message', { name: 'SCSpeedUp', body: { data: [{ type: 4, minutes: 59 }] } });
-    s.resources.allowDiamonds = true; s.silicon.dailyDiamondLimit = 10;
-    f.beforeRead = name => { if (name === 'AllResourceRequest') f.client.emit('message', { name: 'SCSpeedUp', body: { data: [{ type: 4, minutes: 60 }] } }); };
-    await run(f, s, ledger); assert.deepEqual(f.client.writes.map(row=>row.name), ['RepairFleetRequest']);
-    assert.equal(ledger.snapshot().counters.diamonds ?? 0, 0);
-  });
-  await test('维修报价按真实分段表，推送唤醒和普通/追击检查间隔', () => {
+  await test('推送唤醒和普通/追击检查间隔', () => {
     const f = siliconFixture(), s = siliconSettings(), watcher = watchSiliconMining(f.client); let wake = 0; watcher.subscribe(() => wake++);
     f.client.emit('message', { name: 'SCChipMine', body: { chipMines: [] } }); assert.equal(wake, 1); assert.equal(watchSiliconMining(f.client), watcher);
     assert.equal(siliconInterval(s), 600000); s.silicon.fleets[0].pursuit = true; s.silicon.fleets[0].emptyOnly = false; assert.equal(siliconInterval(s), 120000);
-    assert.equal(siliconRepairDiamondCost(f.config, 2, 59), 21); assert.equal(siliconRepairDiamondCost(f.config, 2), 40);
-    f.client.emit('message', { name: 'SCSpeedUp', body: { data: [{ type: 4, minutes: 60 }] } }); assert.equal(watcher.repairMinutes(), 60);
   });
-  await test('未知维修加速到期自然修复不假记加速成功', async () => {
-    const f = siliconFixture(), s = siliconSettings(), ledger = usage(f); s.silicon.fleets[0].autoRepair = true; s.silicon.fleets[0].maxRepairCost = 1; s.silicon.petrolReserve = 50000; s.silicon.dailyPetrolLimit = 1; s.silicon.fleets[0].repairSpeedUp = true; f.state.fleets[0].durability = 1000;
-    s.silicon.fleets[0].minDurabilityPercent = 100; s.resources.allowDiamonds = true; s.silicon.dailyDiamondLimit = 1000;
-    await run(f, s, ledger); f.unknown = true; await run(f, s, ledger); assert(ledger.hasKey('silicon-speed:3001001:1'));
-    f.client.serverClockOffsetMs += 1200000; f.returnFleet('1远征船'); f.state.fleets[0].durability = 2000;
-    await run(f, s, ledger); assert.equal(ledger.keyRecords()['silicon-speed:3001001:1'].confirmed, false); assert.equal(f.client.writes.filter(row => row.name === 'SpeedUpRepairRequest').length, 1);
+  await test('硅矿去程和回城分别计费，已达领奖上限的自然返航仍按回城目标加速', async () => {
+    const f = siliconFixture(), s = siliconSettings(), ledger = usage(f), fleet = s.silicon.fleets[0];
+    Object.assign(fleet, { marchSpeedUp: true, marchDailyDiamonds: 30, returnSpeedUp: true, returnDailyDiamonds: 90, returnTargetSeconds: 95 });
+    s.resources.allowDiamonds = true;
+    await run(f, s, ledger); await run(f, s, ledger);
+    assert.equal(ledger.confirmedCounters().siliconMarchDiamonds1, 30);
+    startMineReturn(f); f.state.reward.myRewardTimes = f.state.reward.maxRewardTimes;
+    const before = ledger.keyRecords(), writes = f.client.writes.length;
+    const step = await planSiliconMaintenance(f.client, f.protocol, f.config, s, ledger, await read(f, s, ledger));
+    assert.equal(step.mode, 'return'); assert.equal(step.cost, 30); assert.match(step.label, /回城/);
+    assert.equal(f.client.writes.length, writes); assert.deepEqual(ledger.keyRecords(), before);
+    await run(f, s, ledger); await run(f, s, ledger);
+    assert.equal(ledger.confirmedCounters().siliconReturnDiamonds1, 30);
+    assert.equal(ledger.confirmedCounters().siliconDiamonds, 60);
+  });
+  await test('主动撤回可确认本矿返航，立即回城不花钻，结果未知不重发', async () => {
+    const f = siliconFixture(), s = siliconSettings(), ledger = usage(f);
+    Object.assign(s.silicon.fleets[0], { returnSpeedUp: true, returnDailyDiamonds: 60 });
+    s.resources.allowDiamonds = true; s.silicon.dailyRewardLimit = 1; f.state.reward.myRewardTimes = 1;
+    f.occupy('1远征船', 5000, 0, 1);
+    f.afterWrite = name => { if (name === 'ChipMineRetreatRequest') { startMineReturn(f); f.unknown = true; } };
+    await run(f, s, ledger); await run(f, s, ledger);
+    assert.deepEqual(f.client.writes.map(row => row.name), ['ChipMineRetreatRequest','SpeedUpFleetRequest']);
+    assert.equal(ledger.pendingCounters().siliconReturnDiamonds1, 30);
+    f.returnFleet('1远征船'); await run(f, s, ledger);
+    assert.equal(ledger.confirmedCounters().siliconReturnDiamonds1 ?? 0, 0);
+    assert.equal(ledger.pendingCounters().diamonds, 30);
+  });
+  await test('其他行军、错误矿格、未开启回城及发送前换航程均不花钻', async () => {
+    for (const kind of ['manual','otherGrid','otherCity','cargo','disabled','zero','changed','global']) {
+      const f = siliconFixture(), s = siliconSettings(), ledger = usage(f);
+      if (kind !== 'manual') await run(f, s, ledger);
+      startMineReturn(f); const fleet = f.state.fleets[0];
+      Object.assign(s.silicon.fleets[0], { returnSpeedUp: kind !== 'disabled', returnDailyDiamonds: kind === 'zero' ? 0 : 60 });
+      s.resources.allowDiamonds = true;
+      if (kind === 'global') s.resources.diamondDailyLimit = 29;
+      if (kind === 'otherCity') fleet.targetCityId++;
+      if (kind === 'otherGrid') fleet.startGridIdx++;
+      if (kind === 'cargo') fleet.treasureLootUid = 1;
+      if (kind === 'changed') f.beforeRead = name => { if (name === 'AllResourceRequest') fleet.targetGridIdx++; };
+      await run(f, s, ledger);
+      assert.equal(f.client.writes.filter(w => w.name === 'SpeedUpFleetRequest').length, 0, kind);
+      assert.equal(ledger.snapshot().counters.diamonds ?? 0, 0, kind);
+    }
+  });
+  await test('第一队预算用尽后第二队仍可去程加速，不受旧维修用量挤占', async () => {
+    const f = siliconFixture(), s = siliconSettings(), ledger = usage(f);
+    s.resources.allowDiamonds = true;
+    for (const fleet of s.silicon.fleets.slice(0,2)) Object.assign(fleet, { enabled: true, marchSpeedUp: true, marchDailyDiamonds: 30 });
+    ledger.confirm(ledger.reserve({ diamonds: 90, siliconDiamonds: 90, siliconRepairDiamonds1: 90 }));
+    await run(f, s, ledger); await run(f, s, ledger); await run(f, s, ledger);
+    assert.equal(ledger.confirmedCounters().siliconMarchDiamonds1, 30);
+    assert.equal(ledger.confirmedCounters().siliconMarchDiamonds2, 30);
+    assert.equal(ledger.confirmedCounters().siliconRepairDiamonds1, 90);
+  });
+  await test('旧版待确认维修加速继续核对费用，归队后不补发', async () => {
+    for (const early of [false, true]) {
+      const f = siliconFixture(), s = siliconSettings(), ledger = usage(f);
+      s.silicon.fleets[0].autoRepair = true; s.silicon.fleets[0].minDurabilityPercent = 100;
+      f.state.fleets[0].durability = 1000; await run(f, s, ledger);
+      const repair = f.state.fleets[0].repairing;
+      const key = 'silicon-speed:3001001:1:repair:' + repair.startTs;
+      ledger.reserve({ diamonds: 90, siliconDiamonds: 90, siliconRepairDiamonds1: 90 }, {}, {}, {
+        uniqueKey: key, details: { kind: 'siliconSpeed', worldId: '3001001', buildingId: '1远征船',
+          repair: true, repairStartTs: repair.startTs, beforeEnd: repair.endTs, targetDurability: 2000 } });
+      if (!early) f.client.serverClockOffsetMs += 1200000;
+      f.returnFleet('1远征船'); f.state.fleets[0].durability = 2000;
+      await run(f, s, ledger);
+      assert.equal(ledger.confirmedCounters().diamonds ?? 0, early ? 90 : 0);
+      assert.equal(ledger.pendingCounters().diamonds ?? 0, early ? 0 : 90);
+      if (!early) assert.equal(ledger.keyRecords()[key].expired, true);
+      assert.equal(f.client.writes.filter(row => row.name === 'SpeedUpRepairRequest').length, 0);
+    }
   });
   await test('读不到原矿位时不能拿空闲回包释放未知撤回记录', async () => {
     const f = siliconFixture(), s = siliconSettings(), ledger = usage(f); s.silicon.dailyRewardLimit = 1; f.state.reward.myRewardTimes = 1; f.occupy('1远征船', 5000, 0, 1); f.unknown = true;
@@ -204,7 +316,7 @@ try {
   });
   await test('舰队最终复查期间关闭加速子开关会释放未发送预算', async () => {
     const f = siliconFixture(), s = siliconSettings(), ledger = usage(f); s.silicon.fleets[0].marchSpeedUp = true;
-    await run(f, s, ledger); s.resources.allowDiamonds = true; s.silicon.dailyDiamondLimit = 1000;
+    await run(f, s, ledger); s.resources.allowDiamonds = true; s.silicon.fleets[0].marchDailyDiamonds = 1000;
     let afterRuby = false; f.beforeRead = name => { if (name === 'AllResourceRequest') afterRuby = true; if (name === 'MyFleetsRequest' && afterRuby) s.silicon.fleets[0].marchSpeedUp = false; };
     await run(f, s, ledger); assert.equal(f.client.writes.length, 1); assert.equal(ledger.snapshot().counters.diamonds ?? 0, 0);
   });
@@ -263,7 +375,7 @@ try {
       ['服务器次数耗尽', f => { f.state.fightTimes = f.state.maxFightTimes; }],
       ['舰队每日次数耗尽', (f, s, p, ledger) => { p.dailyAttackLimit = 1; ledger.confirm(ledger.reserve({ siliconAttacks1: 1 }, {}, {})); }],
       ['只占空位', (f, s, p) => { p.emptyOnly = true; }],
-      ['初等矿不抢占', (f, s, p) => { p.tier = 'BLUE'; f.state.positions[3000] = f.state.positions[5000]; }],
+      ['初等矿不抢占', (f, s, p) => { p.tiers = ['BLUE']; f.state.positions[3000] = f.state.positions[5000]; }],
     ];
     for (const [label, mutate] of cases) {
       const f = siliconFixture(), s = siliconSettings(), ledger = usage(f), policy = hunt(s); f.enemy(0, '名单目标', 900); f.enemy(1, '其他甲', 100); f.enemy(2, '其他乙', 100);

@@ -154,6 +154,20 @@ try {
     assert.equal(result.rejectedActions, 1);
   });
 
+  test('一笔赚100、一笔亏60，积分收益率按100计算，账本净赚40', () => {
+    const book = ledger('mixed-turnover');
+    snapshot(book);
+    const goods = [batch(), batch({ pid: 2 })];
+    const before = state(goods, 500, 0, 20);
+    const middle = state(goods.slice(1), 1100, 100, 20);
+    trade(book, { actionKey: 'profit', expected: { request: 'TradeSellRequest', pid: 1 }, before, after: middle, time: now + 100 });
+    trade(book, { actionKey: 'loss', expected: { request: 'TradeSellRequest', pid: 2 },
+      before: middle, after: state([], 1540, 100, 20), time: now + 200 });
+    const result = merchantJournalSummary(book, event);
+    assert.equal(result.realizedProfit, 40);
+    assert.equal(result.turnoverProfitPerSecond, 100 / 200);
+  });
+
   test('周转历史只用至少两笔实际出售及观察耗时，样本不足返回null', () => {
     const book = ledger('turnover');
     snapshot(book);

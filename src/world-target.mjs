@@ -1,6 +1,7 @@
 import {readTreasureLoot,planTreasureLoot} from './treasure-loot.mjs';
 import {readCityWar,planCityWar,cityWarReservedFleets,cityWarTargetSelected} from './city-war.mjs';
 import {readAllianceRadar} from './alliance-radar.mjs';
+import {previewRadarSweep} from './radar-sweep.mjs';
 import {planRadarPreview,pendingPetrol} from './dispatch-preview.mjs';
 import {inspectHunt} from './pirates.mjs';
 import {selectPirateAdvance} from './pirate-advance.mjs';
@@ -12,6 +13,10 @@ import {exactAutomationId} from './automation-policy.mjs';
 export async function readWorldTarget(client,protocol,config,player,settings,ledger,{layer,key}){
  if(!['cities','treasure','radar','pirates','boss','fleets','fields'].includes(layer)||typeof key!=='string'||key.length>100)throw Error('地图目标无效');
  const view={checkedAt:Math.floor(Date.now()/1000),actions:[],notes:[],fleets:[],fuel:null,cost:null};
+ if(layer==='radar'&&settings.radar.runEnabled&&settings.radar.enabled){
+  const plan=await previewRadarSweep(client,protocol,player,ledger,key);
+  if(plan)return {...view,actions:plan.actions,notes:plan.notes};
+ }
  const blocked=(task,id)=>fleetRecordReason(ledger.keyRecords(),id,exactAutomationId(player.worldId))||dispatchReservationReason(client,settings,task,id);
  let reserved=[];
  if(settings.cityWar.enabled&&settings.cityWar.reserveDuringWar&&['treasure','radar','pirates','boss'].includes(layer)){
