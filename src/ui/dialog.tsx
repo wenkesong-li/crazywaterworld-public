@@ -1,4 +1,6 @@
 import * as React from "react"
+import { Button } from "./button"
+import { X } from "lucide-react"
 import { cn } from "./utils"
 
 // shadcn/ui Dialog 的版式部分。开关由原生 <dialog> 和页面脚本负责，外观见 theme.css。
@@ -19,4 +21,30 @@ function DialogFooter({ className, ...props }: React.ComponentProps<"div">) {
   return <div data-slot="dialog-footer" className={cn("flex flex-col gap-2 sm:flex-row-reverse sm:justify-start", className)} {...props} />
 }
 
-export { DialogHeader, DialogTitle, DialogDescription, DialogFooter }
+function DialogScroll({ className, ...props }: React.ComponentProps<"div">) {
+  return <div data-slot="dialog-scroll" className={className} {...props} />
+}
+
+function ConsoleDialog(props: React.ComponentProps<"dialog">) {
+  return <dialog data-slot="console-dialog" {...props} />
+}
+
+type DialogAction = React.ComponentProps<typeof Button> & { id: string }
+function DialogActions({ primary, secondary, children, className }: {
+  primary?: DialogAction
+  secondary?: DialogAction
+  children?: React.ReactNode
+  className?: string
+}) {
+  return <DialogFooter className={className}>
+    {primary && <Button type="button" {...primary} />}
+    {secondary && <Button type="button" variant="outline" {...secondary} />}
+    {children}
+  </DialogFooter>
+}
+
+function DialogCloseButton({ children = "关闭", ...props }: React.ComponentProps<typeof Button>) {
+  return <Button type="button" variant="outline" size="sm" {...props}><X aria-hidden="true" />{children}</Button>
+}
+
+export { ConsoleDialog, DialogActions, DialogCloseButton, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogScroll }

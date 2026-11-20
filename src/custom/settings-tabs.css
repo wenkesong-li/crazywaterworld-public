@@ -41,14 +41,48 @@
   #tab-settings .config-owner { display: flex; align-items: center; gap: 12px; }
 }
 
-#config-enable-all-dialog { width:min(560px,calc(100% - 24px)); max-height:80dvh; overflow:auto; padding:20px; border:1px solid var(--border); border-radius:14px; background:var(--background); color:var(--foreground) }
+#config-enable-all-dialog { width:min(560px,calc(100% - 24px)); max-height:80dvh; padding:20px; border:1px solid var(--border); border-radius:14px; background:var(--background); color:var(--foreground) }
 #config-enable-all-title { font-size:18px; font-weight:700; margin-bottom:8px }
 #config-enable-all-summary { overflow-wrap:anywhere; color:var(--muted-foreground) }
 #config-enable-all-results { display:grid; gap:8px; margin-top:12px }
 #config-enable-all-results li { padding:8px 10px; border:1px solid var(--border); border-radius:8px; overflow-wrap:anywhere }
 #config-enable-all-results li p { margin:3px 0 0; color:var(--muted-foreground); white-space:pre-line }
 .config-enable-all-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:14px }
-@media (max-width:768px) { #tab-settings .config-toolbar { flex-wrap:wrap } #tab-settings .config-actions { flex-wrap:wrap } }
+@media (max-width:768px) {
+  #tab-settings .config-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    min-width: 0;
+  }
+  #tab-settings .config-actions {
+    width: 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  #tab-settings .config-actions > button {
+    min-width: 0;
+    min-height: 44px;
+    padding-inline: 6px;
+  }
+  #tab-settings .config-row[data-kind="switch"]:not(.is-wide):not(.has-children) {
+    grid-template-columns: minmax(0,1fr) auto;
+  }
+  #tab-settings .config-row[data-kind="switch"] .config-label-line {
+    flex-wrap: nowrap;
+    align-items: flex-start;
+  }
+}
+@media (max-width:480px) {
+  #tab-settings .config-actions {
+    display: grid;
+    grid-template-columns: repeat(6,minmax(0,1fr));
+  }
+  #tab-settings .config-actions > button { grid-column: span 2; }
+  #tab-settings .config-actions > :is(#config-history-save,#config-history-open) { grid-column: span 3; }
+  #tab-settings #config-retry { grid-column: 1 / -1; }
+}
 #config-enable-all-results .config-enable-group > h3 { font-weight:700; margin-bottom:6px }
 #config-enable-all-results .config-enable-group.success > h3 { color:#16815e }
 #config-enable-all-results .config-enable-group.skipped > h3 { color:#a66412 }

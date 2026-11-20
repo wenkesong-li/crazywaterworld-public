@@ -309,39 +309,13 @@ summary.plan-material-label::after { width:12px; height:12px }
 .gift-record-pagination { flex-wrap:wrap; margin-top:12px }
 .gift-record-pagination #gift-page { font-variant-numeric:tabular-nums }
 .gift-account>button,#gift-code-history button { flex:none }
-#gift-batch-dialog,#gift-channel-dialog { width:min(540px,calc(100vw - 32px)); max-height:calc(100dvh - 32px) }
-#gift-batch-dialog[open],#gift-channel-dialog[open] { display:grid; grid-template-rows:auto minmax(0,1fr) auto; gap:20px; overflow:hidden }
-#gift-channel-list-dialog { width:min(760px,calc(100vw - 32px)); max-width:none; max-height:calc(100dvh - 32px) }
-#gift-channel-list-dialog[open] { display:grid; grid-template-rows:auto minmax(0,1fr); gap:16px; overflow:hidden }
-.gift-channel-list-heading { display:flex; align-items:center; gap:8px }
-.gift-channel-list-heading h2 { margin:0 auto 0 0 }
-.gift-channel-table { min-width:0; overflow:auto; border:1px solid var(--border); border-radius:var(--radius) }
-.gift-channel-table table { width:100% }
-.gift-channel-table th { position:sticky; top:0; background:var(--card) }
-.gift-channel-table th:not(:first-child) { width:1%; white-space:nowrap }
-.gift-channel-table td:first-child:not([colspan]) { min-width:7rem; max-width:0 }
-.gift-channel-identity { display:flex; align-items:baseline; gap:8px }
-.gift-channel-name,.gift-channel-url { overflow:hidden; white-space:nowrap; text-overflow:ellipsis }
-.gift-channel-url { flex:1 1 0; min-width:0 }
-.gift-channel-time { white-space:nowrap; font-variant-numeric:tabular-nums }
-.gift-channel-actions { display:flex; gap:4px }
-.gift-channel-actions button { flex:none; white-space:nowrap }
-#gift-channel-errors { max-height:18dvh; overflow:auto; overflow-wrap:anywhere }
-#gift-channel-errors:empty,#gift-channel-status:empty { display:none }
-#gift-channel-dialog textarea { min-height:4em; font-family:monospace }
-#gift-channel-result { overflow-wrap:anywhere; white-space:pre-wrap; max-height:9em; overflow-y:auto }
-#gift-channel-result:empty { display:none }
+#gift-batch-dialog { width:min(540px,calc(100vw - 32px)); max-height:calc(100dvh - 32px) }
+#gift-batch-dialog[open] { display:grid; grid-template-rows:auto minmax(0,1fr) auto; gap:20px; overflow:hidden }
 .gift-batch-fields { display:grid; gap:8px; min-height:0; overflow-y:auto }
 .gift-batch-fields textarea { width:100%; resize:vertical; min-height:120px }
 .gift-batch-fields input { width:100%; min-width:0 }
 #gift-batch-error:empty,#gift-record-notice:empty { display:none }
 @media(max-width:600px) {
-  #gift-channel-list-dialog { width:calc(100vw - 16px); padding:12px }
-  .gift-channel-table :is(th,td) { padding-inline:4px }
-  .gift-channel-table td:first-child:not([colspan]) { min-width:4.5rem }
-  .gift-channel-time { font-size:0.75rem }
-  .gift-channel-url { display:none }
-  .gift-channel-actions button { padding-inline:5px }
   .gift-library-table thead { display:none }
   .gift-library-table tbody { display:block }
   .gift-library-table tr { display:block; padding:10px 12px; border-bottom:1px solid var(--border) }

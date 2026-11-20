@@ -1,0 +1,109 @@
+.guide-surface { min-width: 0; }
+.guide-header,.guide-detail-head {
+  padding: clamp(16px, 3vw, 28px);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card);
+}
+.guide-header { display: flex; align-items: center; justify-content: space-between; gap: 12px 20px; flex-wrap: wrap; }
+.guide-header h2,.guide-detail-head h2 { font-size: clamp(1.25rem, 3vw, 1.8rem); font-weight: 720; line-height: 1.25; overflow-wrap: anywhere; }
+.guide-header p,.guide-meta,.guide-summary { color: var(--muted-foreground); }
+.guide-header p { margin-top: 5px; }
+#guide-query {
+  min-width: 0;
+  width: min(100%, 265px);
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--input);
+  border-radius: 8px;
+  background: var(--background);
+}
+#guide-query:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.guide-tabs {
+  display: flex;
+  gap: 5px;
+  margin: 14px 0;
+  padding: 5px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--muted);
+}
+.guide-tabs button {
+  flex: none;
+  min-height: 42px;
+  padding: 6px 13px;
+  border-radius: 7px;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.guide-tabs button[aria-selected=true] {
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
+.guide-tabs button:hover:not([aria-selected=true]) { color: var(--foreground); background: var(--card); }
+.guide-results { margin: 0 0 8px; font-size: 13px; }
+.guide-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 255px), 1fr)); gap: 12px; }
+.guide-article { min-width: 0; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+.guide-article:hover,.guide-article:focus-within { border-color: var(--ring); }
+.guide-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; }
+.guide-tag { padding: 2px 7px; border-radius: 5px; color: var(--foreground); background: var(--muted); }
+.guide-card { display: block; margin-top: 8px; color: var(--foreground); font-weight: 650; line-height: 1.45; overflow-wrap: anywhere; }
+.guide-card:hover { color: var(--console-tab-accent); text-decoration: underline; text-underline-offset: 3px; }
+.guide-summary { margin-top: 8px; font-size: 13px; line-height: 1.6; }
+.guide-detail-head { margin-top: 10px; }
+.guide-detail-head :is(h2,p,a) { margin-top: 10px; }
+#guide-detail-summary { max-width: 65ch; line-height: 1.7; }
+#guide-source,#guide-back { display: inline-flex; align-items: center; min-height: 44px; padding: 8px 13px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+#guide-source { background: var(--primary); color: var(--primary-foreground); }
+.guide-related-block { margin-top: 16px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+.guide-related-block h3 { font-weight: 700; }
+#guide-related a { padding-block: 8px; border-bottom: 1px solid var(--border); }
+#guide-related a:last-child { border-bottom: 0; }
+@media (max-width: 768px) {
+  .guide-header label { width: 100%; }
+  #guide-query { width: 100%; min-height: 44px; font-size: 16px; }
+  .guide-tabs button { min-height: 44px; }
+}
+
+.guide-tools { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.guide-action {
+  min-height:44px; padding:8px 12px; border:1px solid var(--border);
+  border-radius:8px; background:var(--background); cursor:pointer;
+}
+.guide-action:hover:not(:disabled) { background:var(--accent); }
+.guide-action:disabled { opacity:.6; }
+.guide-source-footer { margin-top:12px; border-top:1px solid var(--border); padding-block:12px; }
+.guide-source-footer #guide-source { color:var(--foreground); background:var(--card); }
+#guide-sync-status:empty { display:none; }
+@media (max-width:768px) { .guide-header .guide-tools { width:100%; } }
+
+:is(#guide-frames,.wiki-frame-viewport) {
+  min-width: 0;
+  height: max(440px,72dvh);
+  overflow: hidden;
+  container-type: inline-size;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+.guide-frame {
+  /* Wiki 固定页头 60px，窄屏固定底部导航 62px。按 iframe 实际宽度裁剪。 */
+  --wiki-header: 60px;
+  --wiki-bottom-nav: 0px;
+  display: block;
+  width: 100%;
+  height: calc(100% + var(--wiki-header) + var(--wiki-bottom-nav));
+  margin-top: calc(-1 * var(--wiki-header));
+  border: 0;
+}
+@container (width < 900px) {
+  .guide-frame { --wiki-bottom-nav: 62px; }
+}
+#guide-local > label { display: block; margin-bottom: 10px; }
+#guide-category-source { color: var(--muted-foreground); font-size: 13px; }
+#guide-category-source:hover { color: var(--foreground); text-decoration: underline; }
+@media (max-width:768px) {
+  :is(#guide-frames,.wiki-frame-viewport) { height: max(350px,68dvh); border-radius: 8px; }
+}

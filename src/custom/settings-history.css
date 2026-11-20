@@ -1,4 +1,4 @@
-#config-history-dialog { width:min(660px,calc(100% - 24px)); max-height:85dvh; padding:20px; overflow:auto; border:1px solid var(--border); border-radius:14px; color:var(--foreground); background:var(--background) }
+#config-history-dialog { width:min(660px,calc(100% - 24px)); max-height:85dvh; padding:20px; border:1px solid var(--border); border-radius:14px; color:var(--foreground); background:var(--background) }
 #config-history-title { font-size:18px; font-weight:700 }
 #config-history-status { margin:6px 0 12px; color:var(--muted-foreground); overflow-wrap:anywhere }
 #config-history-body,.history-differences { display:grid; gap:8px }

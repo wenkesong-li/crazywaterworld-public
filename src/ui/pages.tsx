@@ -1,3 +1,6 @@
+import { Tab, TabPane, Tabs } from "./tabs"
+import { ConsoleDialog, DialogActions, DialogCloseButton } from "./dialog"
+import { ArrowLeft, ArrowRight, ExternalLink, Sparkles, Star, Trophy } from "lucide-react"
 import * as React from "react"
 import { ConsoleUsersDialog } from "./custom/console-users-dialog"
 import { renderToStaticMarkup } from "react-dom/server"
@@ -171,28 +174,100 @@ export function manualPage() {
 
 export function inventoryPage() {
   return renderToStaticMarkup(<div className="grid gap-3"><Panel title="背包">
-    <div className="bag-tabs" role="group" aria-label="背包分类">
-      <Button type="button" variant="outline" data-bag-tab="items" aria-pressed="true"><Package aria-hidden="true" />道具</Button>
-      <Button type="button" variant="outline" data-bag-tab="antiques" aria-pressed="false"><Gem aria-hidden="true" />藏品</Button>
-      <Button type="button" variant="outline" data-bag-tab="heroes" aria-pressed="false"><UsersRound aria-hidden="true" />英雄</Button>
-    </div>
-    <div id="bag-items">
+    <Tabs className="bag-tabs" aria-label="背包分类">
+      <Tab id="bag-tab-items" data-bag-tab="items" panel="bag-items" selected><Package aria-hidden="true" />道具</Tab>
+      <Tab id="bag-tab-antiques" data-bag-tab="antiques" panel="bag-antiques"><Gem aria-hidden="true" />藏品</Tab>
+      <Tab id="bag-tab-heroes" data-bag-tab="heroes" panel="bag-heroes"><UsersRound aria-hidden="true" />英雄</Tab>
+    </Tabs>
+    <TabPane id="bag-items" tab="bag-tab-items">
     <div className="bar"><Button id="inventory-refresh" variant="outline">刷新库存</Button><span id="inventory-status" className="dim" role="status">尚未读取</span></div>
-    <div className="bar inventory-search"><label htmlFor="inventory-query">资源名称</label><Input id="inventory-query" type="search" placeholder="搜索资源名称" /><span id="inventory-match-count" className="dim" /></div>
-    <details id="world-stock-panel" open><summary>分类库存</summary><div id="world-stock" /></details>
-    </div>
-    <div id="bag-heroes" hidden>
+    <div className="bar inventory-search"><label htmlFor="inventory-query">搜索道具</label><Input id="inventory-query" type="search" placeholder="搜索名称、用途或来源" /><span id="inventory-match-count" className="dim" /></div>
+    <div id="world-stock" />
+      <ConsoleDialog id="bag-item-detail" className="bag-item-dialog" aria-labelledby="bag-item-title">
+        <DialogHeader className="bag-detail-heading"><DialogTitle id="bag-item-title">道具详情</DialogTitle><DialogCloseButton id="bag-item-close" /></DialogHeader>
+        <div className="bag-item-content">
+          <div id="bag-item-profile" />
+          <section className="bag-detail-section" aria-labelledby="bag-item-sources-title">
+            <h3 id="bag-item-sources-title">获取途径</h3>
+            <ul id="bag-item-sources" className="bag-detail-list" />
+            <p id="bag-item-sources-empty" className="dim" hidden>游戏配置暂无获取途径</p>
+          </section>
+          <p className="dim bag-item-credit">道具资料来源：游戏配置</p>
+        </div>
+      </ConsoleDialog>
+    </TabPane>
+    <TabPane id="bag-heroes" tab="bag-tab-heroes" hidden>
       <div className="bar"><Button id="bag-hero-refresh" type="button" variant="outline">刷新英雄</Button><span id="bag-hero-status" role="status" className="dim" /></div>
       <div className="bag-search"><label htmlFor="bag-hero-query">搜索英雄</label><Input id="bag-hero-query" type="search" placeholder="输入名称" /></div>
       <p id="bag-hero-matches" className="dim" role="status" hidden />
       <div id="bag-hero-list" className="bag-hero-grid" />
-    </div>
-    <div id="bag-antiques" hidden>
+      <template id="bag-tier-icon"><Trophy aria-hidden="true" /></template>
+      <ConsoleDialog id="bag-hero-detail" aria-labelledby="bag-hero-detail-title">
+        <DialogHeader className="bag-detail-heading">
+          <div><DialogTitle id="bag-hero-detail-title">英雄详情</DialogTitle><p id="bag-hero-detail-account" className="dim" /></div>
+          <DialogCloseButton id="bag-hero-detail-close" />
+        </DialogHeader>
+        <div className="bag-detail-scroll">
+          <div id="bag-hero-detail-profile" />
+          <section className="bag-detail-section" aria-labelledby="bag-hero-skills-title">
+            <h3 id="bag-hero-skills-title">英雄技能</h3>
+            <div id="bag-hero-detail-body" />
+            <Button id="bag-hero-guide" className="bag-hero-guide" type="button" variant="outline">查看社区攻略 <ExternalLink aria-hidden="true" /></Button>
+          </section>
+          <section className="bag-detail-section bag-star-section" aria-labelledby="bag-star-title">
+            <h3 id="bag-star-title"><Sparkles aria-hidden="true" />英雄升星</h3>
+            <div className="bag-star-trajectory">
+              <div><span>当前</span><strong id="bag-star-current">—</strong></div>
+              <ArrowRight aria-hidden="true" />
+              <div><span>目标</span><strong id="bag-star-next">—</strong></div>
+            </div>
+            <ul id="bag-star-materials" className="bag-star-materials" aria-label="碎片库存" />
+            <label className="bag-star-toggle">
+              <input id="bag-hero-universal" type="checkbox" />
+              <span>允许使用万能碎片<small>专属碎片不足时才补差额</small></span>
+              <strong id="bag-star-universal-count" className="bag-star-count" />
+            </label>
+            <p id="bag-star-requirement" className="bag-star-requirement" hidden />
+            <div id="bag-star-cost" className="bag-star-cost" hidden>
+              <h4>本次消耗</h4><ul id="bag-star-cost-list" />
+            </div>
+            <p id="bag-star-confirm-note" className="bag-star-confirm-note" hidden>请核对上面的材料。确认后将立即消耗碎片并升一星。</p>
+          </section>
+        </div>
+        <footer className="bag-detail-footer">
+          <p id="bag-hero-detail-status" className="bag-detail-status" role="status" />
+          <DialogActions className="bag-star-actions">
+            <Button id="bag-hero-star-confirm" type="button" hidden><Star aria-hidden="true" />确认消耗并升星</Button>
+            <Button id="bag-hero-star-cancel" type="button" variant="outline" hidden>返回预览</Button>
+            <Button id="bag-hero-star" type="button" disabled><Star aria-hidden="true" />预览升星</Button>
+            <Button id="bag-hero-star-retry" type="button" variant="outline" hidden>重新核对</Button>
+          </DialogActions>
+        </footer>
+        <section id="bag-hero-guide-reader" aria-labelledby="bag-hero-guide-title" hidden>
+          <div className="bag-guide-toolbar">
+            <Button id="bag-hero-guide-back" type="button" variant="outline"><ArrowLeft aria-hidden="true" />返回详情</Button>
+            <h2 id="bag-hero-guide-title">社区英雄攻略</h2>
+            <a id="bag-hero-guide-external" className="bag-guide-external" target="_blank" rel="noopener noreferrer">新窗口打开 <ExternalLink aria-hidden="true" /></a>
+          </div>
+          <div id="bag-hero-guide-viewport" className="wiki-frame-viewport" />
+        </section>
+      </ConsoleDialog>
+    </TabPane>
+    <TabPane id="bag-antiques" tab="bag-tab-antiques" hidden>
       <div className="bar"><Button id="bag-antique-refresh" type="button" variant="outline">刷新藏品</Button><span id="bag-antique-status" role="status" className="dim" /></div>
       <div className="bag-search"><label htmlFor="bag-antique-query">搜索藏品或套装</label><Input id="bag-antique-query" type="search" placeholder="输入名称" /></div>
       <p id="bag-antique-matches" className="dim" role="status" hidden />
-      <div id="bag-antique-list" className="bag-antique-grid" />
-    </div>
+      <div id="bag-antique-list" hidden>
+        <Tabs className="bag-subtabs" aria-label="藏品分类">
+          <Tab id="bag-antique-tab-all" panel="bag-antique-all" selected>全部</Tab>
+          <Tab id="bag-antique-tab-items" panel="bag-antique-items">藏品</Tab>
+          <Tab id="bag-antique-tab-suits" panel="bag-antique-suits">套装</Tab>
+        </Tabs>
+        <TabPane id="bag-antique-all" tab="bag-antique-tab-all" />
+        <TabPane id="bag-antique-items" tab="bag-antique-tab-items" hidden />
+        <TabPane id="bag-antique-suits" tab="bag-antique-tab-suits" hidden />
+      </div>
+    </TabPane>
   </Panel></div>)
 }
 
