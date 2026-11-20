@@ -165,7 +165,7 @@ try {
     const view = automationControlView(on).find(control => control.key === 'appointments.enabled');
     assert.equal(view.enabled, true);
     assert.deepEqual(view.blockedBy, []);
-    assert(!idleAutomationControls.some(control => control.key === 'appointments.enabled'));
+    assert.equal(idleAutomationControls.find(control => control.key === 'appointments.enabled')?.configTarget, 'appointments');
   });
 
   console.log(`英雄委任挂机测试 ${passed}/${passed} 通过`);

@@ -9,7 +9,7 @@ import { taskSettings, retiredAutomationTasks, migratedAutomationTasks } from '.
 import { EXTENDED_DEFAULTS, EXTENDED_CONSTRAINTS, SILICON_FLEET_NUMBERS, siliconTierLabels, validateSiliconFleets } from './extended-settings.mjs';
 import { treasureRewardOptions } from './treasure-reward-filter.mjs';
 import { activityAutomationDefaults, activityAutomationFields } from './activity-automation.mjs';
-import { DEFAULT_APPOINTMENT_PRIORITIES, normalizeAppointmentPriorities } from './appointment-priorities.mjs';
+import { APPOINTMENT_PRIORITIES, DEFAULT_APPOINTMENT_PRIORITIES, normalizeAppointmentPriorities } from './appointment-priorities.mjs';
 import { validateLineupSettings, validateFleetLineupBindings } from './saved-lineups.mjs';
 import { fleetSpeedDefaults, fleetSpeedEnabled, FLEET_SPEED_NUMBERS, validateFleetSpeeds } from './fleet-speed-settings.mjs';
 import { cityWarFleetStrategy, cityWarUsesGlobalStrategy, validateCityWarFleetStrategies } from './city-war-settings.mjs';
@@ -521,6 +521,7 @@ export function settingsCatalog(config) {
     pirateTypes: unique(rows('WorldPirateCfg').map(r=>option(r.type,r.showName))),
     trialRaids: rows('TrialRaidCfg').map(r => option(r.raidId, r.title)),
     demandSources: DEMAND_SOURCES.map(([value, label]) => option(value, label)),
+    appointmentPriorities: APPOINTMENT_PRIORITIES.map(({ id, label }) => option(id, label)),
     expeditionFleets: rows('BuildingUnlockCfg').filter(r => r.buildingType === '远征船' && /^[1-9]\d*远征船$/.test(r.buildingId)).map(r => option(r.buildingId, '远征舰队 ' + r.buildingId.replace('远征船', '') + ' 队')),
     cityTargets: Object.entries(config?.tables ?? {}).filter(([name]) => /^\d+_CityCfg$/.test(name)).flatMap(([name, table]) => (table.data ?? []).map(row => option(name.split('_')[0] + ':' + row.id, '场景' + name.split('_')[0] + ' · ' + row.name + '（' + row.id + '）'))),
     forgeBuildings: rows('BuildingUnlockCfg').filter(r => r.buildingType === '装备厂').map(r => option(r.buildingId, r.buildingId)),

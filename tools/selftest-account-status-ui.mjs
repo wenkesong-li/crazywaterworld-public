@@ -109,7 +109,6 @@ function fixture(rows = [
     const configAccountChanged = () => env.effects.push('config');
     const giftAccountChanged = () => env.effects.push('gift');
     const loginSettingsAccountChanged = () => env.effects.push('login-settings');
-    const appointmentsAccountChanged = () => {};
     const siliconAccountChanged = () => {}, maybeRefreshSilicon = () => {};
     const resourceFieldsAccountChanged = () => {};
     const renderAccounts = () => env.effects.push('account-cards');

@@ -506,6 +506,11 @@ const configGroups = [
   { id: 'hero-recruit', title: '英雄招募', category: 'heroes', fields: [
     configField('schedule.heroAdRecruit','英雄广告招募','switch',{help:'每天3次，不消耗招募券或钻石。无免广告权益时按设置的等待时间领取。'}),
   ] },
+  { id: 'appointments', title: '英雄任命', category: 'heroes', fields: [
+    configField('appointments.priorities', '委任优先级', 'sortableOrder', {
+      wide: true, catalog: 'appointmentPriorities', help: '越靠上的效果越优先分配英雄。',
+    }),
+  ] },
   { id: 'antique-recruit', title: '藏品招募', category: 'antique', fields: [
     configField('schedule.antiqueAdRecruit','藏品广告招募','switch',{help:'每天3次，不消耗招募券或钻石。无免广告权益时按设置的等待时间领取。'}),
   ] },
@@ -524,7 +529,11 @@ const configGroups = [
     configField('worldBoss.fleetPresets','各舰队出战阵容','fleetLineups',{parent:'worldBoss.fleetIds',wide:true,help:'为已勾选的舰队选择保存的阵容；未指定时使用该舰队当前阵容。只切换英雄与阵型，英雄不得与其他舰队重复。战斗结束并返航后恢复原阵容。'}),
     configField('worldBoss.minDurabilityPercent','最低耐久','number',{unit:'%',help:'0表示不设百分比门槛，仍须有耐久。'}),
   ]},
-  { id:'fleet-dispatch',title:'舰队调度',category:'world',fields:[configField('fleetDispatch.priority','任务优先顺序','dispatchOrder',{wide:true,help:'从上到下检查，已出征舰队不抢占。有效城战时段预留优先；已启动首杀对较低优先级任务预留舰队，无目标后释放。巨轮跟随独立排序；当天世界Boss首战完成后释放舰队。'})]},
+  { id:'fleet-dispatch',title:'舰队调度',category:'world',fields:[configField('fleetDispatch.priority','任务优先顺序','sortableOrder',{
+    wide:true,help:'从上到下检查，已出征舰队不抢占。有效城战时段预留优先；已启动首杀对较低优先级任务预留舰队，无目标后释放。巨轮跟随独立排序；当天世界Boss首战完成后释放舰队。',
+    options: [['cityWar','城战接续'], ['pirateHunt','海盗讨伐 / 首杀'], ['treasure','巨轮普通参战'], ['follow','巨轮跟随'],
+      ['worldBoss','世界Boss首战'], ['radar','联盟情报'], ['silicon','硅矿采集'], ['resourceFields','资源田占领']],
+  })]},
 ];
 
 
@@ -1183,8 +1192,8 @@ function configRenderField(spec) {
     control = configMultiselect(spec, id); box.append(control);
   } else if (spec.kind === 'cityWarRoles') {
     control = configCityWarRoles(spec, id); box.append(control);
-  } else if (spec.kind === 'dispatchOrder') {
-    control = configDispatchOrder(spec, id); box.append(control);
+  } else if (spec.kind === 'sortableOrder') {
+    control = configSortableOrder(spec, id); box.append(control);
   } else if (spec.kind === 'priority') {
     control = configPriorityEditor(spec, id); box.append(control);
   } else if (spec.kind === 'crops') {
@@ -1206,14 +1215,13 @@ function configRenderField(spec) {
   return row;
 }
 
-function configDispatchOrder(spec, id) {
+function configSortableOrder(spec, id) {
   const root = el('div', 'config-dispatch-order'); root.id = id;
   root.setAttribute('role', 'group'); root.setAttribute('aria-label', spec.label);
   const hint = el('p', 'config-help', '拖动左侧手柄调整顺序，也可使用上移、下移按钮。');
   const list = el('div'); list.setAttribute('role', 'list');
   const status = el('span', 'sr-only'); status.setAttribute('role', 'status');
-  const labels = { cityWar: '城战接续', pirateHunt: '海盗讨伐 / 首杀', treasure: '巨轮普通参战',
-    follow: '巨轮跟随', worldBoss: '世界Boss首战', radar: '联盟情报', silicon: '硅矿采集', resourceFields: '资源田占领' };
+  const labels = new Map(spec.options ?? (configEditor.data.catalog?.[spec.catalog] ?? []).map(item => [item.value, item.label]));
   const owner = configEditor.owner;
   let drag = null;
   const editable = () => owner === current && configEditor.owner === owner && !configEditor.busy && !configEditor.loading
@@ -1234,7 +1242,7 @@ function configDispatchOrder(spec, id) {
     if (from < 0 || to < 0 || to >= values.length || from === to) return;
     values.splice(from, 1); values.splice(to, 0, value);
     configSet(spec.key, values); paint(value);
-    status.textContent = (labels[value] || value) + '已移至第' + (to + 1) + '位';
+    status.textContent = (labels.get(value) || value) + '已移至第' + (to + 1) + '位';
   };
   const startDrag = (event, value, row, handle) => {
     if (event.button !== 0 || event.isPrimary === false || handle.disabled || !editable()) return;
@@ -1273,7 +1281,7 @@ function configDispatchOrder(spec, id) {
     values.forEach((value, index) => {
       const row = el('div', 'config-dispatch-row config-dispatch-sortable');
       row.dataset.dispatch = value; row.setAttribute('role', 'listitem');
-      const label = labels[value] || value;
+      const label = labels.get(value) || value;
       const handle = configButton('⠿', () => {}); handle.classList.add('config-dispatch-handle');
       handle.setAttribute('aria-label', '拖动排序：' + label); handle.title = '拖动排序，或按上下方向键移动';
       handle.onpointerdown = event => startDrag(event, value, row, handle);

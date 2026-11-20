@@ -139,7 +139,7 @@ try {
   }
   assert.equal(await page.locator('#config-root').getByRole('button', { name: /重新载入/ }).count(), 0);
   assert.equal(await page.locator('#config-root').getByText(/上次保存/).count(), 0);
-  console.log('通过：30个模块开关各自归位，旧导航与跨页跳转移除');
+  console.log('通过：模块开关各自归位，旧导航与跨页跳转移除');
 
   await group('radar');
   assert.equal(await page.locator('[data-config-key="radar.monthCardSweep"]').count(), 0);
@@ -294,11 +294,24 @@ try {
   assert.equal(await page.locator('#hero-plan, #hero-run, #hero-view, #hero-table, #formation-view').count(), 0);
   assert.equal(await page.locator('#tab-heroes').getByRole('link', { name: '养成设置' }).count(), 0);
   assert.equal(await page.locator('#tab-heroes').getByText('英雄装备', { exact: true }).count(), 0);
-  for (const title of ['英雄任命', '装备制造']) {
-    assert.equal(await page.locator('#tab-heroes [data-slot=card-title]').filter({ hasText: title }).isVisible(), true);
-  }
+  assert.equal(await page.locator('#tab-heroes').getByText('英雄任命', { exact: true }).count(), 0);
+  assert.equal(await page.locator('#tab-heroes [data-slot=card-title]').filter({ hasText: '装备制造' }).isVisible(), true);
   await page.locator('#tabs [data-tab=settings]').click();
   await page.locator('[data-config-tab=heroes]').click();
+  await page.getByRole('tab', { name: '英雄任命', exact: true }).click();
+  const appointmentPanel = page.getByRole('tabpanel', { name: '英雄任命', exact: true });
+  const appointmentSwitch = appointmentPanel.getByRole('switch', { name: '自动委任' });
+  const priorities = settings.appointments.priorities;
+  const reordered = [priorities[1], priorities[0], ...priorities.slice(2)];
+  assert.equal(await appointmentPanel.getByRole('listitem').count(), priorities.length);
+  await appointmentSwitch.click();
+  await appointmentPanel.getByRole('button', { name: '训练营产量提高上移' }).click(); await saved();
+  assert.deepEqual(loadAutomationSettings('config-a').settings.appointments, { enabled: true, priorities: reordered });
+  await page.reload(); await appointmentSwitch.waitFor(); await saved();
+  assert.equal(await appointmentSwitch.getAttribute('aria-checked'), 'true');
+  assert.match(await appointmentPanel.getByRole('listitem').first().textContent(), /训练营产量提高/);
+  console.log('通过：英雄任命从杂项移入英雄标签，开关和优先级自动保存，刷新后保留');
+  await page.getByRole('tab', { name: '英雄养成', exact: true }).click();
   await page.locator('#config-group-heroes').waitFor();
   const picker = page.locator('#config-field-heroes-heroIds');
   assert.match(await picker.locator('summary').textContent(), /重新选择/);

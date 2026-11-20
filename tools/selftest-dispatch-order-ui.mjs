@@ -2,12 +2,15 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { defaultSettings, validateSettings } from '../src/automation-settings.mjs';
+import { defaultSettings, settingsCatalog, validateSettings } from '../src/automation-settings.mjs';
+import { newStateFunction } from './fixtures/console-state.mjs';
 
 const script = fs.readFileSync(new URL('../src/settings-ui.js', import.meta.url), 'utf8');
-const source = script.slice(script.indexOf('function configDispatchOrder('), script.indexOf('function configLineupPicker('));
+const source = script.slice(script.indexOf('function configSortableOrder('), script.indexOf('function configLineupPicker('));
+const groups = newStateFunction(script.slice(0, script.indexOf('function configGet(')) + '\nreturn configGroups;')();
 const initial = defaultSettings().fleetDispatch.priority;
-function fixture(order = initial) {
+function fixture(order = initial, key = 'fleetDispatch.priority') {
+  const spec = groups.flatMap(group => group.fields).find(field => field.key === key);
   const state = { values: [...order], saves: [], focused: null };
   const events = () => {
     const handlers = new Map();
@@ -38,20 +41,21 @@ function fixture(order = initial) {
   }
   const window = { ...events(), scrollBy() {}, innerHeight: 800 }, document = events();
   const context = vm.createContext({
-    current: 'a', configEditor: { owner: 'a', busy: false, loading: false }, window, document,
+    current: 'a', configEditor: { owner: 'a', busy: false, loading: false, data: { catalog: settingsCatalog() } }, window, document,
     el: (tag, className, text) => new Element(tag, className, text),
     clear: node => { node.textContent = ''; return node; },
     configGet: () => state.values,
-    configSet: (key, values) => {
-      assert.equal(key, 'fleetDispatch.priority');
+    configSet: (fieldKey, values) => {
+      assert.equal(fieldKey, key);
       const next = Array.from(values);
-      const settings = defaultSettings(); settings.fleetDispatch.priority = next; validateSettings(settings);
+      const settings = defaultSettings(), [group, field] = key.split('.');
+      settings[group][field] = next; validateSettings(settings);
       state.values = next; state.saves.push(next);
     },
     configButton: (label, onclick) => { const button = new Element('button', '', label); button.onclick = onclick; return button; },
   });
   vm.runInContext(source, context);
-  const root = context.configDispatchOrder({ key: 'fleetDispatch.priority', label: '任务优先顺序' }, 'dispatch');
+  const root = context.configSortableOrder(spec, key);
   const rows = () => root.children[1].children;
   const handle = index => rows()[index].children[0];
   const down = (index = 0, overrides = {}) => {
@@ -85,6 +89,17 @@ test('上下按钮保留边界保护，键盘排序后保留焦点', () => {
   f.handle(0).onkeydown({ key: 'ArrowDown', preventDefault() {} });
   assert.deepEqual(f.order(), initial);
   assert.equal(f.state.focused, f.handle(1));
+});
+
+test('委任效果按已保存的顺序显示，拖动后写回完整优先级', () => {
+  const order = defaultSettings().appointments.priorities.reverse();
+  const f = fixture(order, 'appointments.priorities');
+  assert.deepEqual(f.order(), order);
+  assert.equal(f.rows()[0].children[2].textContent, '锻造时间减少');
+  const handle = f.down();
+  handle.onpointermove({ pointerId: 7, clientY: 540 });
+  handle.onpointerup({ pointerId: 7 });
+  assert.deepEqual(f.state.saves, [[...order.slice(1), order[0]]]);
 });
 
 test('拖动时只预览，放手一次保存完整顺序，再次放手不重复保存', () => {

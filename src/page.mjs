@@ -47,8 +47,6 @@ const accountAddScript = readFileSync(new URL('./account-add-ui.js', import.meta
 const accountBackupScript = readFileSync(new URL('./account-backup-ui.js', import.meta.url), 'utf8');
 const accountPickerScript = readFileSync(new URL('./account-picker-ui.js', import.meta.url), 'utf8');
 const helpTipsScript = readFileSync(new URL('./help-tips.js', import.meta.url), 'utf8');
-const appointmentsScript = readFileSync(new URL('./appointments-ui.js', import.meta.url), 'utf8');
-const appointmentsCss = readFileSync(new URL('./appointments.css', import.meta.url), 'utf8');
 const themeScript = readFileSync(new URL('./theme-ui.js', import.meta.url), 'utf8');
 const consoleStoreScript = readFileSync(new URL('./ui/dist/console-store.js', import.meta.url), 'utf8');
 
@@ -62,7 +60,7 @@ export const PAGE = `<!doctype html>
 <meta name="theme-color" content="#ffffff">
 <meta name="format-detection" content="telephone=no">
 <script id="theme-init">${themeScript}</script>
-<style>@layer properties, theme, base, components, page, utilities; @layer page { ${consoleCss} ${settingsCss} ${appointmentsCss} ${lineupCss} ${siliconOverviewCss} ${resourceFieldsCss} } ${componentCss}</style>
+<style>@layer properties, theme, base, components, page, utilities; @layer page { ${consoleCss} ${settingsCss} ${lineupCss} ${siliconOverviewCss} ${resourceFieldsCss} } ${componentCss}</style>
 <style>${consoleOverridesCss} ${settingsTabsCss} ${settingsHistoryCss} ${bagCss} ${releaseNotesCss} ${giftLibraryCss} ${wechatLoginCss} ${consoleTabsCss} ${consolePolishCss} ${gameGuideCss}</style>
 </head>
 <body>
@@ -845,7 +843,6 @@ function renderHostingControl() {
   if (switchRole) $('account-pause').title = '先暂停同一账号的其他角色，再按本角色的配置开始托管';
 }
 function renderAccountSelect() {
-  appointmentsAccountChanged();
   if(accountDetailsOwner!==current){
     accountSelectionVersion++;
     accountDetailsOwner=current;
@@ -2170,14 +2167,13 @@ ${productionPlanningScript}
 ${settingsScript}
 ${settingsEnableAllScript}
 ${settingsHistoryScript}
-${appointmentsScript}
 ${giftCodeScript}
 window.addEventListener('beforeunload', event => {
   if (stalePageReloadRequested) {
     stalePageReloadRequested = false;
     return;
   }
-  if (configIsDirty() || configEditor.saving || [...appointmentsEditors.values()].some(editor => editor.saving || appointmentsDirty(editor))) {
+  if (configIsDirty() || configEditor.saving) {
     event.preventDefault();
     event.returnValue = '';
   }
@@ -2219,7 +2215,6 @@ function activateConsolePage(button, resource = selectedResource) {
     refreshProgression();
     if (button.dataset.tab === 'overview') {refreshOverview();refreshLoop();}
     if (target === 'inventory') refreshBag();
-    if (target === 'heroes') void appointmentsLoad(true);
     if (target === 'lineups') void refreshSavedLineups();
     if (button.dataset.tab === 'account') {
       renderAccounts();
