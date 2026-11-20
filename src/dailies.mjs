@@ -72,6 +72,11 @@ export function dailyRewardEnabled(settings, id) {
   return settings.dailies.enabled && (group === 'dailies' ? settings.dailies.claimTasks : settings[group]?.claimTask);
 }
 
+export function canClaimDailyReward(task, settings, group) {
+  return task != null && dailyRewardGroup(task.id) === group && dailyRewardEnabled(settings, task.id)
+    && task.progress >= task.targetProgress && !task.rewardClaimed;
+}
+
 // ---- 活跃度宝箱 ---------------------------------------------------------------
 
 // 日和周是两张不同的表，门槛差很远：日 20/40/60/80/100，周 120/240/360/480/600。
@@ -573,13 +578,16 @@ export async function claimDailies(client, protocol, { config = null, timeout = 
     const recheck = Math.min(fresh.dailyResetTime, scheduler.now() + 180);
     if (ready('dailyRewards') && fresh.dailyTask?.length) {
       const selectedTasks = fresh.dailyTask.filter(task => dailyRewardEnabled(getSettings(), task.id));
+      const claimed = task => task.rewardClaimed || results.some(entry => entry.id === task.id && entry.ok && entry.body);
+      const otherTasks = selectedTasks.filter(task => dailyRewardGroup(task.id) === 'dailies');
+      if (otherTasks.length) {
+        scheduler.observe?.('dailies.claimTasks', '已领取 ' + otherTasks.filter(claimed).length + '/' + otherTasks.length + ' 项任务奖励');
+      }
       for (const task of selectedTasks) {
         const group = dailyRewardGroup(task.id);
         if (group === 'dailies') continue;
-        const claimed = task.rewardClaimed || results.some(entry => entry.id === task.id && entry.ok);
-        scheduler.observe?.(group + '.claimTask', claimed ? '今日任务奖励已领取' : '任务进度 ' + task.progress + '/' + task.targetProgress);
+        scheduler.observe?.(group + '.claimTask', claimed(task) ? '今日任务奖励已领取' : '任务进度 ' + task.progress + '/' + task.targetProgress);
       }
-      scheduler.observe?.('dailyRewards','已领取 '+selectedTasks.filter(t=>t.rewardClaimed).length+'/'+selectedTasks.length+' 项任务奖励');
       if (selectedTasks.length && selectedTasks.every(task => task.rewardClaimed)) scheduler.defer('dailyRewards', fresh.dailyResetTime);
       else if (selectedTasks.every(task => task.rewardClaimed || task.progress < task.targetProgress)) scheduler.defer('dailyRewards', recheck);
     }

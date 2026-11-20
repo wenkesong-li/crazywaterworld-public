@@ -90,7 +90,7 @@ import { displayMaterial, getConfig } from './config.mjs';
 import { readHeroGrowthPlan, heroStarRequirement, heroStepLabel, runHeroPlan, formatHeroPlan } from './heroes.mjs';
 import { appointments } from './appointments.mjs';
 import { APPOINTMENT_PRIORITIES } from './appointment-priorities.mjs';
-import { surveyDailies, runDailies, formatSurvey, dailyRewardGroup, dailyRewardEnabled } from './dailies.mjs';
+import { surveyDailies, runDailies, formatSurvey, canClaimDailyReward } from './dailies.mjs';
 import { dailySingleState, addDailyOptions, runDailySingle } from './daily-single.mjs';
 import { surveyTasks, runTasks, formatTaskPlan, selectTaskSettings } from './tasks.mjs';
 import { makeTypeResolver, displayBuilding, weekFactoryInfo, surveyWorld, planWorld, runWorldRound, submitResidentOrder, rerollResidentOrder, watchResidentRefreshes, formatWorldPlan, formatFieldReport, loadMapAsset } from './world.mjs';
@@ -2448,7 +2448,7 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
             if (!enabled) notes.push('开启竞技场挑战、日常行动和每日任务与奖励总开关后执行');
             if (plan.reason) notes.push(plan.reason);
             const actions = enabled ? (plan.actions ?? []).map(a => ({ kind: 'arena', label: a.note, costs: [{ id: 'ARENA_POINT', num: 1 }] })) : [];
-            if (task && dailyRewardEnabled(settings, task.id) && task.progress >= task.targetProgress && !task.rewardClaimed) actions.push({ kind: 'arena', label: '领取竞技场每日任务奖励' });
+            if (canClaimDailyReward(task, settings, 'arena')) actions.push({ kind: 'arena', label: '领取竞技场每日任务奖励' });
             return output({ notes, actions }, {}, '竞技场');
           }
           if (category === 'league') {
@@ -2464,7 +2464,7 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
               }
               notes.push(`今日战斗 ${state.battles ?? '未知'} / ${settings.league.dailyBattleLimit} 次`);
               const task = state.task;
-              if (task && dailyRewardEnabled(settings, task.id) && task.progress >= task.targetProgress && !task.rewardClaimed) actions.push({ kind: 'league', label: '领取积分赛每日任务奖励' });
+              if (canClaimDailyReward(task, settings, 'league')) actions.push({ kind: 'league', label: '领取积分赛每日任务奖励' });
               if (info.bonusItemNum >= 0) notes.push('累计可收集 ' + info.bonusItemNum);
               if (settings.schedule.leagueCollect && info.bonusItemNum > 0) actions.push({ kind: 'leagueCollect', label: '领取累计收集奖励' });
               const pass = await client.request('LeagueBattlePassInfoRequest', {}, 'LeagueBattlePassInfoResponse');
@@ -2616,7 +2616,11 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
               actions.push({ ...action, kind: key === 'arena' ? 'arena' : 'daily', label: `${entry.task.title}：${action.note ?? '执行一次'}` });
             }
             if (settings.dailies.enabled) {
-              for (const task of daily.daily?.dailyTask ?? []) if (dailyRewardEnabled(settings, task.id) && task.progress >= task.targetProgress && !task.rewardClaimed) actions.push({ kind: dailyRewardGroup(task.id) === 'dailies' ? 'reward' : dailyRewardGroup(task.id), label: `领取每日任务 ${task.id} 奖励` });
+              for (const task of daily.daily?.dailyTask ?? []) {
+                if (canClaimDailyReward(task, settings, 'dailies')) {
+                  actions.push({ kind: 'reward', label: `领取每日任务 ${task.id} 奖励` });
+                }
+              }
               for (const action of daily.chests?.actions ?? []) if (action.request === 'DrawWeeklyRewardRequest' ? settings.dailies.claimWeeklyChest : settings.dailies.claimDailyChest) actions.push({ ...action, kind: 'reward', label: action.note });
               if (settings.dailies.claimGift) for (const action of daily.gift?.actions ?? []) actions.push({ ...action, kind: 'reward', label: action.note });
             }
@@ -5001,7 +5005,7 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
       challenges: { mainline: loop.challengeRun?.mainline ?? {}, trials: loop.challengeRun?.trials ?? {}, pirate: loop.challengeRun?.pirate?.state ?? {} },
       pirateAdvance: session.pirateAdvance.view(),
       controls: automationControlView(settings).filter(control => !control.taskKey || isActivityTaskAvailable(control.taskKey, session.client)).map(control=>{
-        const aliases={'factory.produce':'startProduce','factory.cooperateNative':'nativeProduce','factory.gain':'collect','factory.speedUp':'speedUp','building.build':'build','building.upgrade':'upgrade','building.finish':'finishUpgrade','resident.enabled':'finishOrder','resident.reroll':'denyOrder','farm.enabled':'farm','radar.enabled':'联盟情报','treasure.enabled':'万吨巨轮','cityWar.enabled':'城战接续','forge.enabled':'装备锻造','antique.enabled':'藏品养成','dailies.claimTasks':'dailyRewards','dailies.claimDailyChest':'chests','dailies.claimWeeklyChest':'chests','dailies.claimGift':'gift','resident.rewards':'orderDaily','trials.paid':'trialPaidSweep','trials.ads':'trialAdSweep'};
+        const aliases={'factory.produce':'startProduce','factory.cooperateNative':'nativeProduce','factory.gain':'collect','factory.speedUp':'speedUp','building.build':'build','building.upgrade':'upgrade','building.finish':'finishUpgrade','resident.enabled':'finishOrder','resident.reroll':'denyOrder','farm.enabled':'farm','radar.enabled':'联盟情报','treasure.enabled':'万吨巨轮','cityWar.enabled':'城战接续','forge.enabled':'装备锻造','antique.enabled':'藏品养成','dailies.claimDailyChest':'chests','dailies.claimWeeklyChest':'chests','dailies.claimGift':'gift','resident.rewards':'orderDaily','trials.paid':'trialPaidSweep','trials.ads':'trialAdSweep'};
         const sharedKey = {'schedule.worldOnline':'worldOnlineRewards','schedule.tradeTasks':'merchantRewards',
           'guildShip.enabled':'guildShip','guildFort.enabled':'guildFort','heroRaid.enabled':'heroRaid'}[control.key];
         const key=sharedKey||control.taskKey||aliases[control.key]||({'worldBoss.enabled':'worldBoss','gather.fishing':'autoFish','gather.upgradeFishing':'fishEnhance','gather.diving':'autoDive','gather.salvage':'autoSalvage','gather.upgradeDiving':'diveEnhance','gather.upgradeSalvage':'salvageEnhance','gather.floaters':'floaters','gather.antiqueFloaters':'antiqueFloaters','cargo.enabled':'cargo','building.collect':'collect','building.supply':'buildSupply','building.speedUp':'speedUp'})[control.key]||control.key;
@@ -5010,7 +5014,8 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
         let state=(observed?.checkedAt??0)>(recorded?.checkedAt??0)?observed:recorded||observed;
         if(state?.checkedAt && beijingDay(state.checkedAt*1000)!==displayUsage.day)state=null;
         if (state && control.taskKey === 'tradeTasks') state = { ...state, text: '海商王统一领奖的最近记录：' + state.text };
-        let nextCheck = rewards?.nextCheck(key) ?? null;
+        const checkKey = ['dailies.claimTasks', 'arena.claimTask', 'league.claimTask'].includes(key) ? 'dailyRewards' : key;
+        let nextCheck = rewards?.nextCheck(checkKey) ?? null;
         if (control.key === 'museum.runEnabled') {
           const museum = museumRuntimeStatus(settings, {
             status(taskKey) {

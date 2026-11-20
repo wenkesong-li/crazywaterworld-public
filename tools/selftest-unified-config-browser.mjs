@@ -293,7 +293,8 @@ try {
   await page.locator('[data-resource-tab=heroes]').click();
   assert.equal(await page.locator('#hero-plan, #hero-run, #hero-view, #hero-table, #formation-view').count(), 0);
   assert.equal(await page.locator('#tab-heroes').getByRole('link', { name: '养成设置' }).count(), 0);
-  for (const title of ['英雄任命', '英雄装备', '装备制造']) {
+  assert.equal(await page.locator('#tab-heroes').getByText('英雄装备', { exact: true }).count(), 0);
+  for (const title of ['英雄任命', '装备制造']) {
     assert.equal(await page.locator('#tab-heroes [data-slot=card-title]').filter({ hasText: title }).isVisible(), true);
   }
   await page.locator('#tabs [data-tab=settings]').click();

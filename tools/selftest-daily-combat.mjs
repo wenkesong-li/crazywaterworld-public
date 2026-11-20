@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { claimDailies, runDailies, surveyDailies } from '../src/dailies.mjs';
+import { canClaimDailyReward, claimDailies, runDailies, surveyDailies } from '../src/dailies.mjs';
 import { runLoop } from '../src/loop.mjs';
 import { defaultSettings, createUsageLedger } from '../src/automation-settings.mjs';
 import { createActionGuard } from '../src/automation-policy.mjs';
@@ -138,17 +138,39 @@ function fixture(id) {
   settings.dailies.enabled = settings.league.claimTask = true;
   const dailyTask = [1005, 1017, 1002].map(id => ({ id, progress: 1, targetProgress: 1 }));
   const client = { async request(name, body) {
-    if (name === 'DailyTaskInfoRequest') return { dailyTask };
-    assert.equal(name, 'DrawDailyTaskRewardRequest'); sent.push(body.id); return {};
+    if (name === 'DailyTaskInfoRequest') return { dailyTask: structuredClone(dailyTask), dailyResetTime: 2000 };
+    assert.equal(name, 'DrawDailyTaskRewardRequest');
+    sent.push(body.id);
+    const task = dailyTask.find(row => row.id === body.id);
+    assert(!task.rewardClaimed, '同一任务重复领奖');
+    task.rewardClaimed = true;
+    return {};
   } };
   const protocol = { DailyTaskInfoRequest: true, DailyTaskInfoResponse: true, DrawDailyTaskRewardResponse: true };
   await claimDailies(client, protocol, { settings });
   assert.deepEqual(sent, [1017]);
   sent.length = 0;
+  for (const task of dailyTask) task.rewardClaimed = false;
   settings.league.claimTask = false;
   settings.dailies.claimTasks = settings.arena.claimTask = true;
   await claimDailies(client, protocol, { settings });
   assert.deepEqual(sent, [1005, 1002]);
+
+  settings.league.claimTask = true;
+  for (const task of dailyTask) task.rewardClaimed = false;
+  const groups = ['arena', 'league', 'dailies'];
+  for (const [i, task] of dailyTask.entries()) {
+    assert.deepEqual(groups.filter(group => canClaimDailyReward(task, settings, group)), [groups[i]]);
+  }
+  const observations = new Map();
+  const scheduler = { now: () => 1000, due: () => true, defer() {}, observe: (key, value) => observations.set(key, value) };
+  sent.length = 0;
+  await claimDailies(client, protocol, { settings, scheduler });
+  await claimDailies(client, protocol, { settings, scheduler });
+  assert.deepEqual(sent, [1005, 1017, 1002]);
+  assert.equal(observations.get('dailies.claimTasks'), '已领取 1/1 项任务奖励');
+  for (const group of ['arena', 'league']) assert.equal(observations.get(group + '.claimTask'), '今日任务奖励已领取');
+  for (const task of dailyTask) assert(!groups.some(group => canClaimDailyReward(task, settings, group)));
 }
 
 for (const idle of [false, true]) {
