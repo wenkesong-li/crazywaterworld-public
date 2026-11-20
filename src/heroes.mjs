@@ -66,6 +66,14 @@ export function skillLevelMinStar(config, slot, targetLevel) {
   return null;
 }
 
+export function heroStarRequirement(config, heroId, currentStar) {
+  const { heroById, starByStar } = buildIndex(config);
+  const key = QUALITY_CONSUME[heroById.get(heroId)?.quality];
+  const to = currentStar + 1;
+  const count = key && starByStar.get(to)?.[key];
+  return Number.isSafeInteger(count) && count >= 0 ? { to, count } : null;
+}
+
 // itemNum: (itemId) => number，直接吃 AllItemRequest 的结果。
 export function planHeroes({ config, heroes, itemNum, playerLevel, allowUniversal = true, heroIds = null, settings = null }) {
   const { byLevel, starByStar, heroById, skillUp } = buildIndex(config);

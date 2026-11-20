@@ -85,7 +85,7 @@ import { pirateTracker, pirateHuntOptions, startPirateHunt } from './pirates.mjs
 import { activityEntries, activityView, runActivity, runWeekOrder } from './activities.mjs';
 import { activityCatalogPushNames, readActivityCatalog, rememberActivityCatalog, rememberActivityPush } from './activity-catalog.mjs';
 import { displayMaterial, getConfig } from './config.mjs';
-import { readHeroGrowthPlan, heroStepLabel, runHeroPlan, formatHeroPlan } from './heroes.mjs';
+import { readHeroGrowthPlan, heroStarRequirement, heroStepLabel, runHeroPlan, formatHeroPlan } from './heroes.mjs';
 import { appointments } from './appointments.mjs';
 import { APPOINTMENT_PRIORITIES } from './appointment-priorities.mjs';
 import { surveyDailies, runDailies, formatSurvey, dailyRewardGroup, dailyRewardEnabled } from './dailies.mjs';
@@ -117,6 +117,8 @@ import { materialTreeRecipes, planProduction } from './production-planning.mjs';
 import { createProductionTiming, watchProductionTimings } from './production-timing.mjs';
 import { captureManualProductionMaterialState } from './order-reservations.mjs';
 import { createStageTask } from './stages.mjs';
+import { createGameGuides } from './custom/game-guide-library.mjs';
+import { heroBagProfile } from './custom/bag-hero-art.mjs';
 import { createChallengeRun } from './challenge-automation.mjs';
 import { runAction } from './actions.mjs';
 import { accountId, loadStore, saveStore, loginProfiles, matchingProfile, upsertAccount, removeAccount, setActive, pickAccount, describeAccount, revealAccount, rememberSeen, DATA_DIR } from './accounts.mjs';
@@ -125,7 +127,7 @@ import { startCapture, stopCapture, captureState, inspectCaptureRecovery, recove
 import { createPhoneLogin, loadDeviceProfile, saveDeviceProfile, DEVICE_PROFILE_PATH } from './phone-login.mjs';
 import { createAlipayLogin } from './alipay-login.mjs';
 import { createWechatLogin } from './wechat-login.mjs';
-import { iconIndex, atlasFile, itemIcon, resourceIcon, materialIcon, heroIcon, heroCard, buildingIcon, workerIcon } from './art.mjs';
+import { iconIndex, atlasFile, iconEntry, itemIcon, resourceIcon, materialIcon, heroIcon, heroCard, buildingIcon, workerIcon } from './art.mjs';
 
 const LOG_LIMIT = 400;
 const STREAM_BUFFER_LIMIT = 1024 * 1024;
@@ -189,6 +191,7 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
   const protocolDiagnostics = createProtocolDiagnostics(path.join(DATA_DIR, 'protocol-errors'));
   const globalLog = [];
   const streams = new Set();
+  const gameGuides = createGameGuides(DATA_DIR);
   const sessions = new Map();
   const hostingChanges = new Map();
   const worldReads = new Map();
@@ -1895,7 +1898,9 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
           return { productId, name: step.displayProduct || displayMaterial(config, productId),
             estimatedFinishTime: canEstimate ? finishes.get(step.body) : null };
         }) : null;
-        return {
+        const itemMetadata = new Map((config?.tables?.ItemCfg?.data ?? []).map(row => [row.id, row]));
+    const resourceMetadata = new Map((config?.tables?.ResourceCfg?.data ?? []).map(row => [row.id, row]));
+    return {
           buildingId: b.buildingId, displayName: displayBuilding(config, b), type: b.type, typeName: typeNames.get(b.type), level: b.level,
           queue: jobs.length, queueKnown, jobs, plannedJobs,
           capacity: Number.isSafeInteger(survey.factorySlots) && survey.factorySlots > 0 ? survey.factorySlots : null,
@@ -1925,7 +1930,17 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
       })),
       idleRunning: session.loop.running && !session.loop.controller?.signal.aborted,
       autoDeliverOrders: session.loop.tasks.finishOrder,
-      stock: [...survey.stock].filter(([, num]) => num > 0).sort((a, b) => b[1] - a[1]).map(([id, num]) => ({ id, name: displayMaterial(config, id), num, category:config?.tables?.ItemCfg?.data?.find(row=>row.id===id)?.type||(config?.tables?.ResourceCfg?.data?.some(row=>row.id===id)?'基础资源':'其他'), sources: config?.materialSources(id), icon: materialIcon(id) })),
+      stock: [...survey.stock].filter(([, num]) => num > 0).sort((a, b) => b[1] - a[1]).map(([id, num]) => {
+        const resource = resourceMetadata.get(id);
+        const item = itemMetadata.get(id);
+        const metadata = item ?? resource;
+        const description = metadata?.desc
+          ?.replace(/\{(\d+)\}/g, (token, index) => metadata.descParams?.[index] ?? token)
+          .replace(/\[(?:color=[^\]\r\n]+|\/color)\]/gi, '')
+          .trim();
+        return { id, name: displayMaterial(config, id), num, category: item?.type || (resource ? '基础资源' : '其他'),
+          quality: metadata?.quality, description, sources: config?.materialSources(id), icon: materialIcon(id) };
+      }),
       resFields: fields,
       plan: plan.actions,
       notes: [...survey.notes, ...plan.notes],
@@ -2084,6 +2099,15 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
         return;
       }
       if (parsed.pathname.startsWith('/api/settings') && body.length > 262144) throw new SettingsError({ import: '配置文件不能超过 256 KB' });
+      if (route === 'GET /api/game-guides') {
+        res.setHeader('cache-control', 'no-store');
+        json(gameGuides.view());
+        return;
+      }
+      if (route === 'POST /api/game-guides/refresh') {
+        json(await gameGuides.refresh());
+        return;
+      }
       if (route === 'GET /api/resources') {
         json({ ...(resources?.view() ?? { enabled: false, status: 'disabled' }), protocol: protocolStatus() });
         return;
@@ -3945,6 +3969,113 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
           session.productionPlanRead = job;
         }
         json(await session.productionPlanRead);
+        return;
+      }
+      if (route === 'GET /api/bag/hero-detail' || route === 'POST /api/bag/hero-star') {
+        const write = req.method === 'POST';
+        const payload = write ? jsonBody() : null;
+        if (write) needConfirm(payload);
+        const id = write ? payload.heroId : parsed.searchParams.get('heroId');
+        if (typeof id !== 'string' || !id || id.length > 80) throw Error('请选择有效的英雄');
+        const universal = write ? payload.universal === true : parsed.searchParams.get('universal') === '1';
+        const { session } = scoped_(parsed);
+        const client = session.client, generation = session.generation;
+        const enabled = () => client?.connected && session.client === client && session.generation === generation && !session.paused;
+        if (!enabled()) throw Error('请先连接当前游戏账号');
+        const work = async () => {
+          if (!enabled()) throw Error('账号连接已变化，请重新打开英雄详情');
+          const config = loadConfigSafe();
+          const settings = { heroes: { enabled: true, heroIds: [id], star: true, universal } };
+          const { plan, heroes, stock } = await readHeroGrowthPlan(client, config, session.player, settings);
+          const hero = heroes.find(item => item.heroId === id);
+          if (!hero || !enabled()) throw Error('当前账号的英雄数据已变化');
+          const step = plan.steps.find(entry => entry.kind === 'star');
+          const signature = step ? JSON.stringify([generation, id, step.from, step.to, step.costs, universal]) : null;
+          if (!write) {
+            const quote = step ? randomUUID() : null;
+            session.bagHeroQuote = quote ? { quote, signature, expires: Date.now() + 90000 } : null;
+            const profile = heroBagProfile(id, config);
+            const cfg = config.tables.HeroCfg?.data?.find(row => row.id === id);
+            const materials = [{ name: id + '碎片', kind: 'own' }, ...(cfg?.universalItemId
+              ? [{ name: cfg.universalItemId, kind: 'universal' }] : [])].map(item => ({ ...item, count: stock.get(item.name) ?? 0 }));
+            const requirement = heroStarRequirement(config, id, hero.star ?? 0);
+            return { ...profile, heroId: id, level: hero.level ?? null, star: hero.star ?? 0,
+              power: normalize(hero.power ?? null), skillLevels: normalize(hero.skillLevels ?? hero.skills ?? []),
+              maxStar: plan.maxStar, materials, requirement, quote, next: step ? { from: step.from, to: step.to, costs: step.costs } : null };
+          }
+          const verified = session.bagHeroQuote;
+          if (!step || !verified || verified.quote !== payload.quote || verified.signature !== signature || verified.expires <= Date.now()) {
+            throw Error('升星预览已失效或消耗已变化，请重新预览');
+          }
+          session.bagHeroQuote = null;
+          const guard = actionGuard(session, client, config);
+          const [result] = await runHeroPlan(client, protocolFor(client), { steps: [step] }, {
+            allowMutate: true, enabled, timeout: 8000, config, player: session.player,
+            beforeAction: step => guard.before({ ...step, setting: undefined }), afterAction: guard.after, cancelAction: guard.cancel,
+          });
+          if (!result?.ok) {
+            emit(session, 'warn', id + ' 手动升星未确认：' + (result?.error || '连接已变化'));
+            throw Error(result?.error || '升星未执行，请重新打开详情');
+          }
+          const after = await client.request('AllHeroRequest', {}, 'AllHeroResponse', 8000).catch(() => null);
+          const currentStar = after?.heroes?.find(item => item.heroId === id)?.star;
+          if (!(currentStar >= step.to)) throw Error('已收到升星回包，暂未核实星级，请刷新后查看');
+          emit(session, 'info', id + ' 手动升至 ' + currentStar + ' 星');
+          return { star: currentStar };
+        };
+        json(await (write ? enqueue(session, work, '英雄手动升星', { recoverFormation: false }) : readJob(session, work, { recoverFormation: false })));
+        return;
+      }
+      if (['GET /api/account-metrics', 'GET /api/bag/antiques', 'GET /api/bag/heroes'].includes(route)) {
+        const { session, account } = scoped_(parsed);
+        const client = session.client;
+        const player = session.player;
+        const level = player?.level ?? account.lastSeen?.level ?? null;
+        const power = normalize(player?.power ?? account.lastSeen?.power ?? null);
+        const isMetrics = route === 'GET /api/account-metrics';
+        if (!client?.connected || session.paused) {
+          json(isMetrics ? { level, power, gold: null, ruby: null } : { reason: '请先连接当前游戏账号' });
+          return;
+        }
+        const result = await readJob(session, async () => {
+          if (session.client !== client || session.player !== player || session.paused) throw Error('当前游戏连接已变化');
+          if (isMetrics) {
+            const { list } = normalize(await client.request('AllResourceRequest', {}, 'AllResourceResponse', 8000));
+            const amount = id => {
+              const value = list?.find(row => row.res === id)?.amount;
+              return Number.isSafeInteger(value) && value >= 0 ? value : null;
+            };
+            return { level, power, gold: amount(3), ruby: amount(4) };
+          }
+          if (route === 'GET /api/bag/heroes') {
+            const { heroes } = normalize(await client.request('AllHeroRequest', {}, 'AllHeroResponse', 8000));
+            if (!Array.isArray(heroes)) throw Error('英雄数据未同步');
+            const config = loadConfigSafe();
+            return { heroes: heroes.map(({ heroId, level, star, power }) => {
+              const profile = heroBagProfile(heroId, config);
+              return { ...profile, heroId, level, star, power, communityIcon: profile.icon,
+                icon: heroIcon(heroId) ?? heroCard(heroId) };
+            }) };
+          }
+          const config = loadConfigSafe();
+          const required = config?.tables?.ModuleOpenCfg?.data?.find(row => row.moduleId === '藏品')?.playerLevel;
+          if (required && level < required) return { reason: '角色 ' + required + ' 级开放藏品' };
+          const data = normalize(await client.request('AllAntiqueRequest', {}, 'AllAntiqueResponse', 8000));
+          if (!Array.isArray(data.antiques) || !Array.isArray(data.suits)) throw Error('藏品数据未同步');
+          const antiques = new Map((config?.tables?.AntiqueBaseCfg?.data ?? []).map(row => [row.antiqueId, row]));
+          const suits = new Map((config?.tables?.AntiqueSuitCfg?.data ?? []).map(row => [row.suitId, row]));
+          return {
+            masterLv: data.masterLv,
+            antiques: data.antiques.map(row => {
+              const entry = antiques.get(row.id);
+              return { name: entry?.showName || row.id, detail: row.star + ' 星', description: entry?.desc, quality: entry?.color,
+                icon: iconEntry(entry?.resId) ?? (config ? itemIcon(row.id + '碎片') : null) };
+            }),
+            suits: data.suits.map(row => ({ name: suits.get(row.id)?.suitName || '套装 ' + row.id, detail: row.level + ' 级', description: suits.get(row.id)?.suitBrief, quality: suits.get(row.id)?.color })),
+          };
+        }, { recoverFormation: false });
+        if (session.client !== client || session.player !== player || session.paused) throw Error('当前游戏连接已变化');
+        json(result);
         return;
       }
       if (route === 'GET /api/world') {

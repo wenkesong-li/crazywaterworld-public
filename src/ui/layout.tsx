@@ -1,22 +1,25 @@
 import * as React from "react"
 import { renderToStaticMarkup } from "react-dom/server"
-import { Boxes, Building2, CalendarDays, Check, ChevronDown, CircleUserRound, Download, LayoutDashboard, Monitor, Moon, MoreHorizontal, RefreshCw, ScrollText, Settings2, Ship, Sun, Swords, UsersRound, X } from "lucide-react"
+import { Backpack, BookOpen, Coins, Gem, Boxes, Building2, CalendarDays, Check, ChevronDown, CircleUserRound, Download, LayoutDashboard, Monitor, Moon, MoreHorizontal, RefreshCw, Search, ScrollText, Settings2, Ship, Sun, Swords, UsersRound, X } from "lucide-react"
 import { Button } from "./button"
 import { Badge } from "./badge"
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "./card"
-import { DialogFooter, DialogHeader, DialogTitle } from "./dialog"
+import { ConsoleDialog, DialogActions, DialogCloseButton, DialogFooter, DialogHeader, DialogScroll, DialogTitle } from "./dialog"
 import { NativeSelect } from "./native-select"
 import { Input } from "./input"
+import { HelpTip } from "./help-tip"
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "./table"
 import { LOG_GROUPS, LOG_GROUP_TONES } from "../log-categories.mjs"
 
 // 手机底栏使用短名。
 const tabs = [
   ["overview", "总览", "总览", LayoutDashboard],
+  ["inventory", "背包", "背包", Backpack],
   ["settings", "挂机配置", "配置", Settings2], ["manual", "建筑一览", "建筑", Building2],
   ["stages", "挑战", "挑战", Swords], ["lineups", "阵容", "阵容", UsersRound],
   ["activities", "活动", "活动", CalendarDays], ["resources", "杂项", "杂项", Boxes],
   ["account", "账号", "账号", CircleUserRound],
+  ["guide", "玩法攻略", "攻略", BookOpen],
 ] as const
 
 const themes = [["system", "跟随系统", Monitor], ["light", "白天", Sun], ["dark", "黑夜", Moon]] as const
@@ -26,6 +29,9 @@ export function chrome() {
     <div className="headline">
       <div className="mast">
         <span className="mast-icon"><Ship aria-hidden="true" /></span><h1>疯狂水世界</h1><span className="brand-label">航行控制台</span>
+        <Button id="console-quick-open" type="button" size="sm" variant="outline" aria-label="快速跳转" aria-haspopup="dialog" aria-controls="console-quick-dialog">
+          <Search aria-hidden="true" /><span>快速跳转</span><kbd aria-hidden="true">⌘/Ctrl K</kbd>
+        </Button>
         <Button id="console-version-open" type="button" variant="outline" size="sm" hidden aria-haspopup="dialog" aria-controls="console-version-warning"><RefreshCw aria-hidden="true" />页面已过期</Button>
       </div>
       <div className="connection">
@@ -33,8 +39,13 @@ export function chrome() {
         <label className="account-label" htmlFor="account-picker-trigger">当前账号</label>
         <div id="account-picker" className="account-picker">
           <select id="account" hidden aria-hidden="true" tabIndex={-1} />
-          <Button id="account-picker-trigger" type="button" variant="outline" className="w-full min-w-0 justify-start font-normal" aria-haspopup="listbox" aria-controls="account-picker-list" aria-expanded="false" title="选择账号并查看状态">
-            <span id="account-picker-title" className="min-w-0 flex-1 truncate text-left">选择账号</span>
+          <Button id="account-picker-trigger" type="button" variant="outline" className="account-identity-trigger w-full min-w-0 justify-start font-normal" aria-haspopup="listbox" aria-controls="account-picker-list" aria-expanded="false" title="选择账号并查看状态">
+            <span className="account-identity">
+              <span id="account-channel" hidden />
+              <span id="account-world" hidden />
+              <span id="account-picker-title">选择账号</span>
+              <span id="account-role-stats" hidden>Lv.<strong id="account-level">—</strong><span className="account-power">战力 <strong id="account-power">—</strong></span></span>
+            </span>
             <Badge id="account-picker-status" className="chip rounded-md" variant="outline">未连接</Badge>
             <ChevronDown className="size-4 shrink-0 opacity-50" aria-hidden="true" />
           </Button>
@@ -42,10 +53,9 @@ export function chrome() {
         </div>
         <Button id="connect" size="sm">连接</Button>
         <div className="hosting-controls">
-          <label className="hosting-interval" htmlFor="loop-every"><span className="hosting-interval-label">间隔</span><Input id="loop-every" className="h-8 w-20" type="number" min="1" max="86400" step="1" required defaultValue="60" disabled aria-label="挂机间隔（秒）" aria-describedby="loop-interval-status" title="挂机间隔（秒），按账号自动保存，下一轮使用新间隔" /><span>秒</span></label>
+          <div className="hosting-interval"><label className="hosting-interval-label" htmlFor="loop-every">间隔</label><Input id="loop-every" className="h-8 w-20" type="number" min="1" max="86400" step="1" required defaultValue="60" disabled aria-label="挂机间隔（秒）" aria-describedby="loop-interval-status" title="挂机间隔（秒），按账号自动保存，下一轮使用新间隔" /><span>秒</span><HelpTip title="挂机间隔">每轮挂机检查结束后，等待设定的秒数再开始下一轮。例如设为 60 秒，代表一轮结束后等约 60 秒再检查。间隔按当前游戏账号自动保存。</HelpTip></div>
           <Button id="loop-toggle" size="sm" variant="outline" disabled title="按已保存的任务持续挂机，直到手动暂停">开始挂机</Button>
           <Button id="account-pause" size="sm" variant="outline" disabled title="按已保存的任务开始持续托管">开始托管</Button>
-          <Button id="logs-open" size="sm" variant="outline" aria-haspopup="dialog" aria-controls="journal-dialog"><ScrollText aria-hidden="true" />日志 <span id="log-top-count">0</span></Button>
           <span id="loop-interval-status" className="sr-only" role="status" />
           <span id="loop-hint" className="sr-only" role="status" />
         </div>
@@ -58,21 +68,51 @@ export function chrome() {
             {themes.map(([mode, label, Icon]) => <Button key={mode} type="button" variant="ghost" size="sm" role="menuitemradio" aria-checked={mode === "system"} data-theme-option={mode} tabIndex={-1} className="w-full justify-start aria-checked:bg-accent">
               <Icon aria-hidden="true" /><span className="flex-1 text-left">{label}</span><span data-theme-check="" hidden={mode !== "system"}><Check aria-hidden="true" /></span>
             </Button>)}
+            <Button id="theme-appearance-open" type="button" variant="ghost" size="sm" role="menuitem" className="w-full justify-start"><Settings2 aria-hidden="true" />配色与动效</Button>
           </div>
         </div>
+      </div>
+      <div className="account-metrics" aria-label="当前角色信息">
+        <span><Coins aria-hidden="true" />金币 <strong id="account-gold">—</strong></span>
+        <span><Gem aria-hidden="true" />钻石 <strong id="account-ruby">—</strong></span>
+        <button id="account-balance-refresh" type="button" aria-label="刷新余额" title="刷新金币和钻石" disabled><RefreshCw aria-hidden="true" />刷新</button>
+        <span id="account-balance-feedback" className="sr-only" role="status" />
       </div>
     </div>
     <nav id="tabs" aria-label="功能导航">{tabs.map(([key, title, short, Icon]) =>
       <button type="button" key={key} className="nav-tab" data-tab={key} aria-label={title} aria-current={key === "overview" ? "page" : undefined}><Icon aria-hidden="true" /><span className="nav-full">{title}</span><span className="nav-short" aria-hidden="true">{short}</span></button>
-    )}</nav>
+    )}
+      <button type="button" id="logs-open" className="nav-tab" aria-label="挂机日志" aria-haspopup="dialog" aria-controls="journal-dialog">
+        <ScrollText aria-hidden="true" /><span className="nav-full">挂机日志</span><span className="nav-short" aria-hidden="true">日志</span>
+        <span id="log-top-count" aria-hidden="true">0</span>
+      </button>
+    </nav>
+    <ConsoleDialog id="console-quick-dialog" aria-labelledby="console-quick-title">
+      <DialogHeader className="console-quick-heading"><DialogTitle id="console-quick-title">快速跳转</DialogTitle><DialogCloseButton id="console-quick-close" /></DialogHeader>
+      <Input id="console-quick-query" type="search" placeholder="搜索功能或页面文字，例如：抓取日志、藏品" role="combobox" aria-label="搜索功能或页面文字" aria-controls="console-quick-results" aria-expanded="true" autoComplete="off" />
+      <div id="console-quick-results" role="listbox" aria-label="跳转结果" />
+      <p id="console-quick-empty" className="dim" role="status" hidden>没有匹配的页面</p>
+      <p className="console-quick-keys">↑ ↓ 选择 · Enter 打开 · Esc 关闭</p>
+    </ConsoleDialog>
+    <ConsoleDialog id="theme-appearance-dialog" aria-labelledby="theme-appearance-title">
+      <DialogHeader className="console-quick-heading"><DialogTitle id="theme-appearance-title">配色与动效</DialogTitle><DialogCloseButton id="theme-appearance-close" /></DialogHeader>
+      <div className="appearance-presets" role="group" aria-label="配色预设">
+        {([["classic", "经典", "#202020"], ["ocean", "海蓝", "#126577"], ["forest", "森林", "#24664a"], ["violet", "暮紫", "#6a46a0"], ["amber", "暖橙", "#a0581d"]] as const).map(([id, label, color]) =>
+          <Button key={id} type="button" variant="outline" data-appearance-palette={id} aria-pressed={id === "classic"}><span className="appearance-swatch" style={{ backgroundColor: color }} />{label}</Button>)}
+      </div>
+      <label className="appearance-row" htmlFor="theme-accent-color"><span>自定义强调色</span><input id="theme-accent-color" type="color" defaultValue="#126577" /></label>
+      <label className="appearance-row" htmlFor="theme-motion"><span>界面动效</span><select id="theme-motion"><option value="system">跟随系统</option><option value="off">关闭</option></select></label>
+      <p className="dim appearance-note">配色会即时预览并保存在此浏览器。系统启用减少动态效果时，页面会减少动画。</p>
+      <DialogActions secondary={{ id: "theme-appearance-reset", children: "恢复默认" }} />
+    </ConsoleDialog>
     <div id="page-progress" aria-hidden="true" />
   </header>)
 }
 
 export function journal() {
-  return renderToStaticMarkup(<dialog id="journal-dialog" aria-label="运行日志"><aside id="journal" aria-label="运行日志">
-    <DialogHeader><DialogTitle className="journal-title">运行日志<Badge id="log-count">0</Badge></DialogTitle></DialogHeader>
-    <Button id="logs-close" size="icon-sm" variant="ghost" aria-label="关闭运行日志"><X aria-hidden="true" /></Button>
+  return renderToStaticMarkup(<ConsoleDialog id="journal-dialog" aria-label="挂机日志"><aside id="journal" aria-label="挂机日志">
+    <DialogHeader><DialogTitle className="journal-title">挂机日志<Badge id="log-count">0</Badge></DialogTitle></DialogHeader>
+    <Button id="logs-close" size="icon-sm" variant="ghost" aria-label="关闭挂机日志"><X aria-hidden="true" /></Button>
     <div className="log-filter-row"><span className="log-filter-label" id="log-groups-label">分类</span><div id="log-tabs" className="log-tags" role="tablist" aria-labelledby="log-groups-label">
       {["全部", ...Object.keys(LOG_GROUPS)].map((name, index) => <button key={name} type="button" id={`log-tab-${index}`} className="log-tag log-group-tag" data-tone={LOG_GROUP_TONES[name] || "neutral"} role="tab" data-log-group={index === 0 ? "all" : name} aria-selected={index === 0} aria-controls="log-panel" tabIndex={index === 0 ? 0 : -1}>{name}<span data-log-group-count="">0</span></button>)}
     </div></div>
@@ -90,12 +130,12 @@ export function journal() {
       <div id="log" role="log" aria-live="polite" aria-label="操作记录" />
       <p id="log-empty">还没有运行记录</p>
     </div>
-  </aside></dialog>)
+  </aside></ConsoleDialog>)
 }
 
 export function dialogs() {
   return renderToStaticMarkup(<>
-    <dialog id="console-version-warning" aria-labelledby="console-version-title" aria-describedby="console-version-description">
+    <ConsoleDialog id="console-version-warning" aria-labelledby="console-version-title" aria-describedby="console-version-description">
       <DialogHeader>
         <DialogTitle id="console-version-title" tabIndex={-1} autoFocus>需要刷新控制台</DialogTitle>
         <p id="console-version-description" className="dim">控制台已更新或重启。刷新后可继续保存修改和启动任务。</p>
@@ -116,8 +156,8 @@ export function dialogs() {
         <Button type="button" id="console-version-dismiss" variant="outline">返回页面</Button>
         <Button type="button" id="console-version-reload">刷新页面</Button>
       </div>
-    </dialog>
-    <dialog id="guild-tech-upgrade-dialog" aria-labelledby="guild-tech-upgrade-title" aria-describedby="guild-tech-levels">
+    </ConsoleDialog>
+    <ConsoleDialog id="guild-tech-upgrade-dialog" aria-labelledby="guild-tech-upgrade-title" aria-describedby="guild-tech-levels">
       <DialogHeader>
         <DialogTitle id="guild-tech-upgrade-title" />
         <p id="guild-tech-levels" className="dim" />
@@ -138,17 +178,17 @@ export function dialogs() {
           <Button id="guild-tech-submit" type="submit">开始升级</Button>
         </div>
       </form>
-    </dialog>
-    <dialog id="modal" aria-labelledby="m-title">
+    </ConsoleDialog>
+    <ConsoleDialog data-dialog-layout="scroll" id="modal" aria-labelledby="m-title">
       <DialogHeader><DialogTitle id="m-title" /></DialogHeader>
-      <div id="m-body" />
-      <DialogFooter><Button id="m-ok">确认</Button><Button id="m-cancel" variant="outline">取消</Button></DialogFooter>
-    </dialog>
-    <dialog id="account-dialog" aria-labelledby="account-title"><form method="dialog">
+      <DialogScroll id="m-body" />
+      <DialogActions primary={{ id: "m-ok", children: "确认" }} secondary={{ id: "m-cancel", children: "取消" }} />
+    </ConsoleDialog>
+    <ConsoleDialog id="account-dialog" aria-labelledby="account-title"><form method="dialog">
       <DialogHeader><DialogTitle id="account-title" /><p id="account-message" className="dim" /></DialogHeader>
       <Input id="account-label-input" aria-label="账号备注" />
-      <DialogFooter><Button value="ok">确认</Button><Button value="cancel" variant="outline">取消</Button></DialogFooter>
-    </form></dialog>
+      <DialogActions primary={{ id: "account-dialog-confirm", type: "submit", value: "ok", children: "确认" }} secondary={{ id: "account-dialog-cancel", type: "submit", value: "cancel", children: "取消" }} />
+    </form></ConsoleDialog>
     <div id="ui-help-popover" className="help-popover" role="dialog" aria-modal="false" aria-labelledby="ui-help-title" tabIndex={-1} hidden>
       <div className="help-popover-head"><strong id="ui-help-title">说明</strong><Button id="ui-help-close" size="icon-xs" variant="ghost" aria-label="关闭说明"><X aria-hidden="true" /></Button></div>
       <div id="ui-help-body" />
@@ -159,6 +199,7 @@ export function dialogs() {
 // Clone these rendered components for data that arrives after the initial page.
 export function templates() {
   return renderToStaticMarkup(<>
+    <template id="ui-action-button"><Button type="button" variant="outline" size="sm" /></template>
     <template id="ui-table"><Table><TableHeader><TableRow><TableHead /></TableRow></TableHeader><TableBody><TableRow><TableCell /></TableRow></TableBody></Table></template>
     <template id="ui-button"><Button variant="outline" size="sm" /></template>
     <template id="ui-building-card"><Card><CardHeader className="flex-row flex items-center justify-between"><CardTitle><h2 /></CardTitle></CardHeader><CardContent /></Card></template>

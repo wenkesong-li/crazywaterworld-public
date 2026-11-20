@@ -1,0 +1,132 @@
+// 缩略图索引来自 https://fkssj.game-wiki.cn/heroes
+const heroThumbnails = new Map(Object.entries({
+  "北境大帝": "beijing-dadi",
+  "雾隐千代": "wuying-qiandai",
+  "永生老乔": "yongsheng-laoqiao",
+  "自由斗士": "ziyou-doushi",
+  "修女瑟琳娜": "xiunv-selinna",
+  "战神小布": "zhanshen-xiaobu",
+  "水底之王": "shuidi-zhiwang",
+  "铁肘老大": "tiezhou-laoda",
+  "过江龙": "guojianglong",
+  "秦璃": "qinli",
+  "兰博": "lanbo",
+  "大嘴山姆": "dazui-shanmu",
+  "巫师老侃": "wushi-laokan",
+  "铁腿红魔": "tietui-hongmo",
+  "小丑杰克": "xiaochou-jieke",
+  "机器屠夫": "jiqi-tufu",
+  "探案双子星": "tanan-shuangzixing",
+  "雷教授": "lei-jiaoshou",
+  "戴安娜": "daianna",
+  "拳王肯爷": "quanwang-kenye",
+  "一龙": "yilong",
+  "李忠诚": "li-zhongcheng",
+  "机修罗莉": "jixiu-luoli",
+  "变形Y哥": "bianxing-yge",
+  "神父欧玛": "shenfu-ouma",
+  "蜜雪儿": "mixueer",
+  "米娅": "miya",
+  "微醺之龙": "weixun-zhilong",
+  "蜥蜴侠": "xiyi-xia",
+  "鬼火杰森": "guihuo-jiesen",
+  "巨石绿魔": "jushi-lvmo",
+  "不死州长": "busi-zhouzhang",
+  "李追远": "lizhuiyuan",
+  "赏金猎人": "shangjin-lieren",
+  "重炮琼斯": "zhongpao-qiongsi",
+  "珍妮": "zhenni",
+  "小布": "xiaobu",
+  "警员鲍勃": "jingyuan-bobo",
+  "骑士瑞文": "qishi-ruiwen",
+  "海森堡": "haisenbao",
+  "小飞侠": "xiaofeixia",
+  "喷火莉莉": "penhuo-lili"
+}));
+
+export function communityHeroArt(name) {
+  const slug = heroThumbnails.get(name);
+  return slug ? {
+    thumb: 'https://fkssj.game-wiki.cn/media/heroes/thumbs/' + slug + '.webp',
+    w: 1,
+    h: 1,
+  } : null;
+}
+
+// 分档与品级显示来自社区图鉴，实际养成消耗始终以游戏配置计算。
+const heroGuideMetadata = {
+  "北境大帝": ["beijing-dadi", "T0", "超凡"],
+  "雾隐千代": ["wuying-qiandai", "T0", "超凡"],
+  "永生老乔": ["yongsheng-laoqiao", "T0", "超凡"],
+  "自由斗士": ["ziyou-doushi", "T0", "超凡"],
+  "修女瑟琳娜": ["xiunv-selinna", "T0", "超凡"],
+  "战神小布": ["zhanshen-xiaobu", "T0", "超凡"],
+  "水底之王": ["shuidi-zhiwang", "T0", "超凡"],
+  "铁肘老大": ["tiezhou-laoda", "T0", "超凡"],
+  "过江龙": ["guojianglong", "T0", "超凡"],
+  "秦璃": ["qinli", "T0", "超凡"],
+  "兰博": ["lanbo", "T0", "传说+"],
+  "大嘴山姆": ["dazui-shanmu", "T0", "传说+"],
+  "巫师老侃": ["wushi-laokan", "T0", "传说+"],
+  "铁腿红魔": ["tietui-hongmo", "T0.5", "传说+"],
+  "小丑杰克": ["xiaochou-jieke", "T0.5", "传说+"],
+  "机器屠夫": ["jiqi-tufu", "T0.5", "传说+"],
+  "探案双子星": ["tanan-shuangzixing", "T1", "超凡"],
+  "雷教授": ["lei-jiaoshou", "T1", "传说+"],
+  "戴安娜": ["daianna", "T1", "传说+"],
+  "拳王肯爷": ["quanwang-kenye", "T1", "传说+"],
+  "一龙": ["yilong", "T1", "传说+"],
+  "李忠诚": ["li-zhongcheng", "T1", "传说+"],
+  "机修罗莉": ["jixiu-luoli", "T1", "传说+"],
+  "变形Y哥": ["bianxing-yge", "T1", "传说"],
+  "神父欧玛": ["shenfu-ouma", "T2", "传说+"],
+  "蜜雪儿": ["mixueer", "T2", "传说"],
+  "米娅": ["miya", "T2", "传说"],
+  "微醺之龙": ["weixun-zhilong", "T2", "传说+"],
+  "蜥蜴侠": ["xiyi-xia", "T2", "传说+"],
+  "鬼火杰森": ["guihuo-jiesen", "T2", "传说"],
+  "巨石绿魔": ["jushi-lvmo", "T2", "传说"],
+  "不死州长": ["busi-zhouzhang", "T2", "传说"],
+  "无念铁僧": ["wunian-tieseng", "T2", "传说"],
+  "李追远": ["lizhuiyuan", "T2", "传说+"],
+  "眼镜枪客": ["yanjing-qiangke", "T2", "传说"],
+  "赏金猎人": ["shangjin-lieren", "T2", "史诗"],
+  "重炮琼斯": ["zhongpao-qiongsi", "T2", "史诗"],
+  "珍妮": ["zhenni", "T2", "稀有"],
+  "小布": ["xiaobu", "T2", "稀有"],
+  "警员鲍勃": ["jingyuan-bobo", "T2", "稀有"],
+  "骑士瑞文": ["qishi-ruiwen", "T2", "史诗"],
+  "海森堡": ["haisenbao", "T2", "史诗"],
+  "小飞侠": ["xiaofeixia", "T2", "史诗"],
+  "喷火莉莉": ["penhuo-lili", "T2", "史诗"],
+};
+
+const heroGuideNotes = new Map([
+  ['北境大帝', '利用远距离冲锋聚拢敌人，适合负责开团。培养不足时，可考虑用已有前排过渡。'],
+  ['雾隐千代', '擅长针对敌方高攻击目标，适合围绕切后排安排阵容。'],
+  ['永生老乔', '围绕能量弹叠加打输出。投入前可先核对星级与专武能否满足主力位要求。'],
+  ['自由斗士', '前排保护型英雄，适合搭配需要掩护的远程输出。'],
+  ['修女瑟琳娜', '唤魂阵兼顾队伍增益和持续保护，适合补足阵容的辅助位。'],
+  ['战神小布', '冲锋型前排输出。遇到依赖回复的阵容，可关注专武带来的重伤效果。'],
+  ['小丑杰克', '利用分身与切入补充伤害，可用作第二队输出。'],
+  ['巫师老侃', '护盾优先给近处队友，调整站位可以指定希望优先保护的输出位。'],
+  ['大嘴山姆', '以嘲讽分担压力的前排，适合保护队伍的主要输出。'],
+]);
+
+export function heroBagProfile(id, config) {
+  const hero = config?.tables?.HeroCfg?.data?.find(row => row.id === id);
+  const name = hero?.name || id;
+  const guide = Object.hasOwn(heroGuideMetadata, name) ? heroGuideMetadata[name] : null;
+  return {
+    name,
+    quality: hero?.quality || '',
+    guideTier: guide?.[1] || '',
+    qualityLabel: guide?.[2] || '',
+    career: hero?.career || '',
+    season: hero?.season ?? null,
+    description: heroGuideNotes.get(name) ?? hero?.featureDesc ?? '',
+    skills: hero?.skillNames ?? [],
+    source: guide ? 'https://fkssj.game-wiki.cn/heroes/' + guide[0] : 'https://fkssj.game-wiki.cn/heroes',
+    icon: communityHeroArt(name) ?? communityHeroArt(id),
+  };
+}

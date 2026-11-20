@@ -1,0 +1,113 @@
+:root { --console-tab-accent: var(--appearance-accent, #155eef); }
+html[data-theme="dark"] { --console-tab-accent: var(--appearance-accent, #8cb2ff); }
+
+:is(#tabs,#tab-settings .config-tabs,.resource-tabs,.log-filter,.config-subtabs,.config-families,.bag-tabs,.bag-subtabs,.activity-current-tabs,.activity-state-tabs,.log-tags) {
+  gap: 6px;
+  background: transparent;
+  border-radius: 0;
+  box-shadow: inset 0 -1px var(--border);
+}
+:is(#tab-settings .config-tabs,.resource-tabs,.log-filter,.config-subtabs,.config-families,.bag-tabs,.bag-subtabs,.log-tags) {
+  height: auto;
+  align-items: stretch;
+  padding-block: 0;
+}
+:is(#tabs,#tab-settings .config-tabs,.resource-tabs,.log-filter,.config-subtabs,.config-families,.bag-tabs,.bag-subtabs,.activity-current-tabs,.activity-state-tabs,.log-tags) > button {
+  position: relative;
+  height: auto;
+  min-height: 38px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+:is(#tabs,#tab-settings .config-tabs,.resource-tabs,.log-filter,.config-subtabs,.config-families,.bag-tabs,.bag-subtabs,.activity-current-tabs,.activity-state-tabs,.log-tags) > button::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 2px;
+  background: currentColor;
+  opacity: 0;
+  pointer-events: none;
+}
+:is(#tabs,#tab-settings .config-tabs,.resource-tabs,.log-filter,.config-subtabs,.config-families,.bag-tabs,.bag-subtabs,.activity-current-tabs,.activity-state-tabs,.log-tags) > button:hover:not(:disabled) {
+  background: transparent;
+  color: var(--foreground);
+}
+:is(#tabs,#tab-settings .config-tabs,.resource-tabs,.log-filter,.config-subtabs,.config-families,.bag-tabs,.bag-subtabs,.activity-current-tabs,.activity-state-tabs,.log-tags) > button:is([aria-selected=true],[aria-current=page],[aria-pressed=true]):not(:disabled) {
+  background: transparent;
+  color: var(--console-tab-accent);
+  font-weight: 700;
+  box-shadow: none;
+}
+:is(#tabs,#tab-settings .config-tabs,.resource-tabs,.log-filter,.config-subtabs,.config-families,.bag-tabs,.bag-subtabs,.activity-current-tabs,.activity-state-tabs,.log-tags) > button:is([aria-selected=true],[aria-current=page],[aria-pressed=true]):not(:disabled)::after {
+  opacity: 1;
+}
+:is(#tabs,#tab-settings .config-tabs,.resource-tabs,.log-filter,.config-subtabs,.config-families,.bag-tabs,.bag-subtabs,.activity-current-tabs,.activity-state-tabs,.log-tags) > button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+:is(#tabs,#tab-settings .config-tabs,.resource-tabs,.log-filter,.config-subtabs,.config-families,.bag-tabs,.bag-subtabs,.activity-current-tabs,.activity-state-tabs,.log-tags) > button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+#tabs { padding-bottom: 0; }
+:is(.activity-current-tabs,.activity-state-tabs) { padding-bottom: 0; }
+.hosting-interval .help-tip { flex:none; margin:0 }
+@media (max-width:768px) {
+  .headline .hosting-controls { grid-template-columns:104px repeat(2,minmax(0,1fr)) }
+  .headline .hosting-interval { grid-template-columns:minmax(0,1fr) auto auto }
+  .headline #loop-every { width:100%; min-width:0; padding-inline:5px }
+  #tabs[aria-label] {
+    position: fixed;
+    inset: auto 0 0;
+    display: flex;
+    gap: 2px;
+    width: auto;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x pinch-zoom;
+    background: var(--background);
+    padding-bottom: calc(4px + env(safe-area-inset-bottom));
+  }
+  #tabs > button.nav-tab { flex: 1 0 48px; min-height: 48px; }
+  #tab-settings .config-tabs { display: flex; }
+  :is(#tab-settings .config-tabs,.config-subtabs,.config-families,.resource-tabs,.bag-tabs,.bag-subtabs,.activity-current-tabs,.activity-state-tabs,.log-tags,.log-filter) > button { min-height: 44px; }
+}
+.bag-tabs > button { display: inline-flex; align-items: center; gap: 6px; padding-inline: 12px; cursor: pointer; }
+.bag-tabs > button svg { width: 16px; height: 16px; }
+
+#tab-settings .config-tabs { width: 100%; padding-inline: 0; }
+#tab-settings #config-fields .config-subtabs {
+  width: calc(100% - 48px);
+  padding-inline: 0;
+}
+@media (max-width:768px) {
+  #tab-settings #config-fields .config-subtabs { width: calc(100% - 32px); }
+}
+
+#tabs #log-top-count {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--muted);
+  font-size: 11px;
+}
+.release-notes-short { display: none; }
+@media (max-width:768px) {
+  #tabs #log-top-count { display: none; }
+  .headline .mast { grid-column: 1; gap: 6px; }
+  .headline #release-notes-open { min-height:44px; padding-inline:8px; }
+  .headline #release-notes-open > svg { display:none; }
+}
+@media (max-width:380px) {
+  #release-notes-open .release-notes-full { display: none; }
+  #release-notes-open .release-notes-short { display: inline; }
+}
+
+@media (max-width:1099px) {
+  .headline #release-notes-open { grid-area:1 / 2; justify-self:end; }
+}

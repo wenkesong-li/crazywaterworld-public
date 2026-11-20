@@ -5,7 +5,18 @@ import { LOG_CATEGORIES, LOG_GROUPS, LOG_GROUP_TONES } from './log-categories.mj
 import { createLogAccountLabels } from './log-accounts.mjs';
 import { chrome, journal, dialogs, templates, giftCodesPage, overviewPage, manualPage, inventoryPage, heroesPage, lineupsPage, guildPage, activitiesPage, accountPage, stagePanel, settingsPage } from './ui/dist/console.mjs';
 const componentCss = readFileSync(new URL('./ui/dist/theme.css', import.meta.url), 'utf8');
+const gameGuideCss = readFileSync(new URL('./custom/game-guide.css', import.meta.url), 'utf8');
+const gameGuideScript = readFileSync(new URL('./custom/game-guide-ui.js', import.meta.url), 'utf8');
+const gameGuideData = JSON.stringify(JSON.parse(readFileSync(new URL('./custom/game-guide-catalog.json', import.meta.url), 'utf8'))).replace(/</g, '\\u003c');
+const consoleQuickScript = readFileSync(new URL('./custom/console-quick-nav.js', import.meta.url), 'utf8');
+const consolePolishCss = readFileSync(new URL('./custom/console-polish.css', import.meta.url), 'utf8');
+const consoleTabsCss = readFileSync(new URL('./custom/console-tabs.css', import.meta.url), 'utf8');
 const settingsHistoryScript = readFileSync(new URL('./settings-history-ui.js', import.meta.url), 'utf8');
+const settingsHistoryCss = readFileSync(new URL('./custom/settings-history.css', import.meta.url), 'utf8');
+const settingsTabsCss = readFileSync(new URL('./custom/settings-tabs.css', import.meta.url), 'utf8');
+const bagCss = readFileSync(new URL('./custom/bag.css', import.meta.url), 'utf8');
+const bagScript = readFileSync(new URL('./custom/bag-ui.js', import.meta.url), 'utf8');
+const consoleOverridesCss = readFileSync(new URL('./custom/console-overrides.css', import.meta.url), 'utf8');
 const consoleCss = readFileSync(new URL('./console.css', import.meta.url), 'utf8');
 const progressionScript = readFileSync(new URL('./ui/progression.js', import.meta.url), 'utf8');
 const lineupScript = readFileSync(new URL('./lineup-editor.js', import.meta.url), 'utf8');
@@ -45,12 +56,13 @@ export const PAGE = `<!doctype html>
 <meta name="format-detection" content="telephone=no">
 <script id="theme-init">${themeScript}</script>
 <style>@layer properties, theme, base, components, page, utilities; @layer page { ${consoleCss} ${settingsCss} ${appointmentsCss} ${lineupCss} ${siliconOverviewCss} ${resourceFieldsCss} } ${componentCss}</style>
+<style>${consoleOverridesCss} ${settingsTabsCss} ${settingsHistoryCss} ${bagCss} ${consoleTabsCss} ${consolePolishCss} ${gameGuideCss}</style>
 </head>
 <body>
 ${chrome()}
 <div class="deck"><main>
   <nav id="resource-tabs" class="resource-tabs" aria-label="杂项分类" hidden>
-    <button type="button" data-resource-tab="guild">联盟</button><button type="button" data-resource-tab="inventory">仓库</button><button type="button" data-resource-tab="heroes">英雄与装备</button><button type="button" data-resource-tab="giftcodes">礼包兑换</button>
+    <button type="button" data-resource-tab="guild">联盟</button><button type="button" data-resource-tab="heroes">英雄与装备</button><button type="button" data-resource-tab="giftcodes">礼包兑换</button>
     <button type="button" data-resource-tab="dailies">日常任务</button>
   </nav>
   <section id="tab-overview">
@@ -93,6 +105,44 @@ ${chrome()}
   </section>
   <section id="tab-account" class="hidden">
     ${accountPage()}
+  </section>
+  <section id="tab-guide" class="hidden guide-surface">
+    <div id="guide-index">
+      <div class="guide-header">
+        <div><h2 id="guide-title" tabindex="-1">玩法攻略</h2><p id="guide-topic-description"></p></div>
+        <div class="guide-tools">
+          <button id="guide-mode" class="guide-action" type="button" aria-pressed="false">站内目录</button>
+          <button id="guide-refresh" class="guide-action" type="button" hidden>重新拉取攻略</button>
+        </div>
+      </div>
+      <p id="guide-sync-status" class="dim guide-results" role="status"></p>
+      <div id="guide-tabs" class="guide-tabs" role="tablist" aria-label="攻略分类">
+        <button id="guide-tab-hero" type="button" role="tab" data-topic="hero" aria-controls="guide-panel" aria-selected="true">英雄攻略</button>
+        <button id="guide-tab-building" type="button" role="tab" data-topic="building" aria-controls="guide-panel" aria-selected="false" tabindex="-1">建筑攻略</button>
+        <button id="guide-tab-lineup" type="button" role="tab" data-topic="lineup" aria-controls="guide-panel" aria-selected="false" tabindex="-1">阵容推荐</button>
+      </div>
+      <div id="guide-panel" role="tabpanel" aria-labelledby="guide-tab-hero">
+        <div id="guide-frames"></div>
+        <div id="guide-local" hidden>
+          <label><span class="sr-only">搜索攻略标题</span><input id="guide-query" type="search" placeholder="搜索攻略标题"></label>
+          <p id="guide-result" class="dim guide-results" role="status"></p>
+          <div id="guide-list" class="guide-list"></div>
+        </div>
+        <footer class="guide-source-footer"><a id="guide-category-source" target="_blank" rel="noopener noreferrer">来源：疯狂水世界 Wiki · 新窗口打开 ↗</a></footer>
+      </div>
+    </div>
+    <div id="guide-detail" hidden>
+      <button id="guide-back" type="button">← 返回攻略</button>
+      <article class="guide-detail-head">
+        <p id="guide-detail-meta" class="guide-meta"></p>
+        <h2 id="guide-detail-title" tabindex="-1"></h2>
+        <p id="guide-detail-summary"></p>
+      </article>
+      <section class="guide-related-block" aria-labelledby="guide-related-title">
+        <h3 id="guide-related-title">同类攻略</h3><div id="guide-related"></div>
+      </section>
+      <footer class="guide-source-footer"><a id="guide-source" target="_blank" rel="noopener noreferrer">来源：疯狂水世界 Wiki · 查看原文 ↗</a></footer>
+    </div>
   </section>
 </main></div>
 ${journal()}
@@ -280,7 +330,8 @@ function iconEl(entry, size, name) {
   img.title = name || '';
   img.loading = 'lazy';
   img.decoding = 'async';
-  img.onerror = () => img.replaceWith(iconEl(null, size, name));
+  if (entry.thumb.startsWith('https://')) img.referrerPolicy = 'no-referrer';
+  img.onerror = () => img.replaceWith(iconEl(entry.fallback, size, name));
   img.src = entry.thumb;
   return img;
 }
@@ -843,6 +894,7 @@ function selectLoadedAccount(next) {
   renderAccountSelect();
   refreshProgression();
   void refreshSavedLineups();
+  refreshBag();
   refreshManualWorld();
   refreshActivities();
   refreshStages();
@@ -1222,7 +1274,10 @@ async function refreshLoop() {
   loopReads++;
   try {
     const data = await call('/api/loop');
-    if (account === current && version === loopVersion) renderLoop(data);
+    if (account === current && version === loopVersion) {
+      renderLoop(data);
+      void refreshAccountMetrics();
+    }
   } catch {
     /* call 已记录错误 */
   } finally {
@@ -1733,6 +1788,7 @@ function refreshManualWorld(force = false) {
   if (!available || worldRead?.account === account) return;
   const version = ++worldVersion;
   worldRead = { account, version };
+  $('inventory-status').textContent = '正在读取库存';
   $('world-view').textContent = '正在读取海面数据…';
   call('/api/world').then(data => {
     if (version === worldVersion && current === account) renderWorld(data);
@@ -2164,6 +2220,7 @@ async function pollCapture() {
       capturePoll = null;
       await loadAccounts(false);
       renderAccounts();
+      pollCapture();
     }
   } catch (error) {
     if (version !== captureFlowVersion) return;
@@ -2312,6 +2369,7 @@ ${worldMapScript}
 ${siliconOverviewScript}
 ${resourceFieldsScript}
 ${inventoryScript}
+${bagScript}
 ${productionPlanningScript}
 ${settingsScript}
 ${settingsHistoryScript}
@@ -2337,7 +2395,8 @@ function activateConsolePage(button, resource = selectedResource) {
     // 当前历史记录随刷新保留；离开锚点对应的页面时移除旧地址。
     const staleAnchor = (target !== 'settings' && location.hash.startsWith('#config-group-'))
       || (target !== 'stages' && location.hash === '#pirate-first-kill')
-      || (target !== 'overview' && location.hash === '#journal');
+      || (target !== 'overview' && location.hash === '#journal')
+      || (target !== 'guide' && /^#guide-\d+$/.test(location.hash));
     const url = staleAnchor ? location.pathname + location.search : location.href;
     history.replaceState({ ...history.state, consoleView: { tab: button.dataset.tab, resource } }, '', url);
     stateActions.setView({ page: target, ...(isResource ? { resource } : {}) });
@@ -2348,14 +2407,21 @@ function activateConsolePage(button, resource = selectedResource) {
       if (selected && isResource) tab.scrollIntoView({ block: 'nearest', inline: 'center' });
     }
     closeHelpTip(false);
-    for (const other of document.querySelectorAll('#tabs button')) other.removeAttribute('aria-current');
+    for (const other of document.querySelectorAll('#tabs [data-tab]')) other.removeAttribute('aria-current');
     button.setAttribute('aria-current', 'page');
+    if (matchMedia('(max-width: 768px)').matches) {
+      const bar = $('tabs');
+      const bounds = bar.getBoundingClientRect();
+      const item = button.getBoundingClientRect();
+      if (item.left < bounds.left) bar.scrollLeft += item.left - bounds.left;
+      else if (item.right > bounds.right) bar.scrollLeft += item.right - bounds.right;
+    }
     for (const section of document.querySelectorAll('main > section')) {
       section.classList.toggle('hidden', section.id !== 'tab-' + target);
     }
     refreshProgression();
     if (button.dataset.tab === 'overview') {refreshOverview();refreshLoop();}
-    if(isResource&&resource==='inventory')refreshManualWorld();
+    if (target === 'inventory') refreshBag();
     if (target === 'heroes') void appointmentsLoad(true);
     if (target === 'lineups') void refreshSavedLineups();
     if (button.dataset.tab === 'account') {
@@ -2369,9 +2435,10 @@ function activateConsolePage(button, resource = selectedResource) {
     }
     if(target==='giftcodes')void refreshGiftCodes();
     if (target === 'activities') refreshActivities();
+    if (target === 'guide') renderGuideView();
     if (button.dataset.tab === 'stages') {refreshStages();void refreshSavedLineups();}
 }
-document.querySelectorAll('#tabs button').forEach(button => { button.onclick = () => activateConsolePage(button); });
+document.querySelectorAll('#tabs [data-tab]').forEach(button => { button.onclick = () => activateConsolePage(button); });
 for(const link of document.querySelectorAll('a[href^="#config-group-"]'))link.onclick=event=>{if(location.hash===link.getAttribute('href')){event.preventDefault();activateConsolePage(document.querySelector('#tabs [data-tab="settings"]'));configApplyHash();}};
 document.querySelectorAll('[data-resource-tab]').forEach(button => { button.onclick = () => activateConsolePage(document.querySelector('#tabs [data-tab="resources"]'), button.dataset.resourceTab); });
 
@@ -2391,11 +2458,13 @@ async function boot() {
   }
   // 显式链接优先，否则恢复当前历史记录的页面；配置分组由 configApplyHash 恢复。
   const savedView = history.state?.consoleView;
-  const initialTab = location.hash.startsWith('#config-group-') ? 'settings'
+  const initialTab = /^#guide-\d+$/.test(location.hash) ? 'guide'
+    : location.hash.startsWith('#config-group-') ? 'settings'
     : location.hash === '#pirate-first-kill' ? 'stages' : location.hash === '#journal' ? 'overview'
+    : savedView?.tab === 'resources' && savedView.resource === 'inventory' ? 'inventory'
     : savedView?.tab === 'login-settings' ? 'account'
     : savedView?.tab === 'resources' && savedView.resource === 'activities' ? 'activities' : savedView?.tab;
-  const button = [...document.querySelectorAll('#tabs button')].find(tab => tab.dataset.tab === initialTab)
+  const button = [...document.querySelectorAll('#tabs [data-tab]')].find(tab => tab.dataset.tab === initialTab)
     || document.querySelector('#tabs [data-tab="overview"]');
   const resource = [...document.querySelectorAll('[data-resource-tab]')].some(tab => tab.dataset.resourceTab === savedView?.resource)
     ? savedView.resource : selectedResource;
@@ -2424,7 +2493,11 @@ consoleStore.subscribe((state, previous) => {
     }
   }
 });
+window.addEventListener('pageshow',event=>{if(event.persisted)location.reload();});
 boot();
+let gameGuideCatalog = ${gameGuideData};
+${gameGuideScript}
+${consoleQuickScript}
 setInterval(refreshOverview, 20000);
 setInterval(() => { if (!document.hidden && accounts.some(account => account.status?.reconnecting)) paintConnection(); }, 1000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){void refreshAccountStatuses();refreshLoop();refreshStages();}});
