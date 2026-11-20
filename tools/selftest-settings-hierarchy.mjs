@@ -673,6 +673,11 @@ test('世界Boss领奖只在世界分组出现，首战派遣与领奖独立控�
   assert.deepEqual(f.editor.groups.get('arena').fields.map(field => field.key), ['schedule.arena', 'arena.target', 'arena.maxPowerRatio', 'arena.dailyBattleLimit', 'arena.claimTask']);
   assert.deepEqual(f.editor.groups.get('league').fields.map(field => field.key),
     ['schedule.leagueChallenge', 'league.target', 'league.maxPowerRatio', 'league.dailyBattleLimit', 'league.claimTask', 'schedule.leagueCollect', 'schedule.leaguePassRewards']);
+  for (const [key, owner] of [['dailies.claimTasks', 'rewards'], ['arena.claimTask', 'arena'], ['league.claimTask', 'league'],
+    ['schedule.leagueCollect', 'league'], ['schedule.leaguePassRewards', 'league']]) {
+    assert.deepEqual([...f.editor.groups.values()].filter(group => group.fields.some(field => field.key === key)).map(group => group.id), [owner]);
+  }
+  assert(!f.widget('schedule.dailyRewards'), '旧的统一领奖开关不应显示');
   f.env.hash = '#config-group-daily-challenges'; f.applyHash();
   assert.equal(f.editor.selectedGroups.daily, 'league');
 });

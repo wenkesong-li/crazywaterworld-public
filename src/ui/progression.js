@@ -2,7 +2,6 @@
 const progressionViews = [
   { id:'guild-tech',tab:'guild',path:'/api/guild/tech',render:renderGuildTech },
   { id: 'trial', tab: 'stages', path: '/api/trials', render: renderTrialProgress },
-  { id: 'equipment', tab: 'heroes', path: '/api/equipment', render: renderEquipment },
   { id: 'crafting', tab: 'heroes', path: '/api/equipment/crafting', render: renderCrafting },
   { id: 'pirate-board', tab: 'activities', path: '/api/pirates/board', render: renderPirateBoard },
   { id: 'guild', tab: 'guild', boxId: 'guild-aid-view', path: '/api/guild', render: renderGuild },
@@ -46,7 +45,7 @@ async function refreshProgression(only) {
     finally{if(valid())box.removeAttribute('aria-busy');}
   }));
 }
-for(const id of ['trial','guild','guild-tech','equipment','crafting'])$(id+'-refresh').onclick=()=>refreshProgression(id);
+for(const id of ['trial','guild','guild-tech','crafting'])$(id+'-refresh').onclick=()=>refreshProgression(id);
 
 function progressionAction(label, path, payload, account, reason, group) {
   const key = JSON.stringify(group ? [account, group] : [account, path, payload]);
@@ -66,7 +65,7 @@ function progressionAction(label, path, payload, account, reason, group) {
     finally {
       pendingProgression.delete(key);
       if (account === current) {
-        const view=path.includes('/crafting/')?'crafting':path.includes('/pirates/')||path.includes('/fleets/')?'pirate-board':path.includes('/guild/')?'guild':path.includes('/equipment/')?'equipment':'trial';
+        const view=path.includes('/crafting/')?'crafting':path.includes('/pirates/')||path.includes('/fleets/')?'pirate-board':path.includes('/guild/')?'guild':'trial';
         button.disabled=Boolean(reason);button.textContent=label;await refreshProgression(view);
       }
     }
@@ -295,38 +294,6 @@ async function refreshTrialTasks() {
   } catch { /* 请求错误由统一日志展示，保留现有状态。 */ }
 }
 setInterval(refreshTrialTasks, 3000);
-
-const equipmentHeroSelection=new Map();
-function renderEquipment(box, data, account) {
-  if (data.locked) { box.textContent = '英雄装备在角色 ' + data.requiredLevel + ' 级开放'; return; }
-  box.appendChild(el('p', null, '持有装备 ' + data.items.length + ' 件 · ' + data.ironName + ' ' + fmt(data.iron)));
-  if (!data.items.length) { box.appendChild(el('p', 'dim', '装备仓库为空。获得装备后可在这里穿戴和强化。')); return; }
-  const heroNames = new Map(data.heroes.map(h => [h.heroId, h.name]));
-  const bar = el('div', 'bar');
-  const equipped = el('div');
-  if (data.heroes.length) {
-    const select = choice(bar, '选择英雄', data.heroes.map(h => ({ value: h.heroId, text: h.name })));
-    const draw = () => {
-      const hero = data.heroes.find(h => h.heroId === select.value);
-      clear(equipped);
-      if (!hero) return;
-      equipped.appendChild(table(['部位', '已穿戴', '可补空槽'], hero.slots.map(s => [s.type, s.item?.name || '空槽', s.suggested?.name || '—'])));
-      if (hero.slots.some(s => s.suggested)) equipped.appendChild(progressionAction('为' + hero.name + '补齐空槽', '/api/equipment/wear', { heroId: hero.heroId }, account));
-    };
-    const remembered=equipmentHeroSelection.get(account);
-    if(data.heroes.some(h=>h.heroId===remembered))select.value=remembered;
-    select.onchange=()=>{equipmentHeroSelection.set(account,select.value);draw();};
-    draw();
-    box.append(bar, equipped);
-  }
-  box.appendChild(table(['装备', '部位', '穿戴者', '等级', '升一级'], data.items.map(item => {
-    const cost = item.nextCost;
-    return [item.name, item.type || '未知', item.owner ? heroNames.get(item.owner) || '已穿戴' : '闲置',
-      fmt(item.level), cost == null ? '已达上限或不可强化' : progressionAction('强化 · ' + fmt(cost) + ' ' + data.ironName,
-        '/api/equipment/enhance', { uid: item.uid, expectedLevel: item.level, maxCost: cost }, account,
-        cost > data.iron ? data.ironName + '不足' : '')];
-  })));
-}
 
 const guildRequestViews = new Map();
 const mutualDrafts = new Map(), mutualWidgets = new Map();

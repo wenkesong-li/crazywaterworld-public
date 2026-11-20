@@ -301,10 +301,6 @@ export function heroesPage() {
       <ol id="appointments-priorities" className="appointments-priorities" aria-labelledby="appointments-priority-title" aria-describedby="appointments-help" />
       <div className="bar"><Button id="appointments-retry" variant="outline" size="sm" hidden>重试保存</Button><Button id="appointments-reload" variant="outline" size="sm" hidden>重新载入</Button><span id="appointments-feedback" className="sr-only" aria-live="polite" /></div>
     </Panel>
-    <Panel title="英雄装备">
-      <div className="bar"><Button id="equipment-refresh" variant="outline">刷新装备</Button></div>
-      <div id="equipment-view" className="progression-view" aria-live="polite" />
-    </Panel>
     <Panel title="装备制造"><div className="bar"><Button id="crafting-refresh" variant="outline">刷新装备厂</Button></div><div id="crafting-view" className="progression-view" aria-live="polite" /></Panel>
   </div>)
 }
