@@ -47,7 +47,6 @@ const cases = [
   ['selftest-appointment-loop.mjs'],
   ['selftest-appointment-http.mjs'],
   ['selftest-appointment-settings-http.mjs'],
-  ['selftest-appointments-ui.mjs'],
   ['selftest-saved-lineups.mjs'],
   ['selftest-hero-growth.mjs'],
   ['selftest-hero-advanced-growth.mjs'],

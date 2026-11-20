@@ -87,7 +87,6 @@ import { activityCatalogPushNames, readActivityCatalog, rememberActivityCatalog,
 import { displayMaterial, getConfig } from './config.mjs';
 import { readHeroGrowthPlan, heroStarRequirement, heroStepLabel, runHeroPlan, formatHeroPlan } from './heroes.mjs';
 import { appointments } from './appointments.mjs';
-import { APPOINTMENT_PRIORITIES } from './appointment-priorities.mjs';
 import { surveyDailies, runDailies, formatSurvey, canClaimDailyReward } from './dailies.mjs';
 import { dailySingleState, addDailyOptions, runDailySingle } from './daily-single.mjs';
 import { surveyTasks, runTasks, formatTaskPlan, selectTaskSettings } from './tasks.mjs';
@@ -1038,7 +1037,7 @@ export function createConsole({ host = '127.0.0.1', port = 17321, onLog, recover
       settings: current.settings.appointments,
       revision: current.revision,
       baseRevision: current.baseRevision,
-      options: APPOINTMENT_PRIORITIES.map(({ id, label }) => ({ value: id, label })),
+      options: current.catalog.appointmentPriorities,
     };
   }
 

@@ -195,7 +195,6 @@ function fixture(initial = sampleAccounts()) {
     const configAccountChanged = () => {};
     const giftAccountChanged = () => {};
     const loginSettingsAccountChanged = () => {};
-    const appointmentsAccountChanged = () => {};
     const siliconAccountChanged = () => {};
     const resourceFieldsAccountChanged = () => {};
     const resetWorldMap = () => {};

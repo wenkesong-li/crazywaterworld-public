@@ -37,10 +37,10 @@ let passed = 0;
 const check = async (name, run) => { await run(); passed++; console.log('通过：' + name); };
 
 try {
-  await check('28个模块启停集中在所属配置，全部字段有唯一编辑位置', () => {
+  await check('29个模块启停集中在所属配置，全部字段有唯一编辑位置', () => {
     const rendered = configFields.filter(field => field.moduleControl).map(field => field.key);
     const idleKeys = idleAutomationControls.map(control => control.key), movedFields = idleAutomationControls.flatMap(control => control.fields);
-    assert.equal(idleKeys.length, 28, '联盟募兵统一由联盟模块管理，不保留旧订单入口');
+    assert.equal(idleKeys.length, 29);
     assert.equal(rendered.length, new Set(rendered).size, '每个入口只显示一次');
     assert.deepEqual(new Set(rendered), new Set(idleKeys));
     assert.deepEqual(new Set(settingsUiRules().controlFields), new Set(movedFields));

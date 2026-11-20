@@ -41,7 +41,7 @@ add('antique.enabled','藏品自动养成','藏品',{
  configLabel:'藏品养成总开关', configuredFields:['antique.activate','antique.star','antique.master','antique.suit'],
  help:'开启后，挂机按下方已选动作培养藏品。关闭会暂停藏品养成，仍可编辑各项设置。养成只使用已有资源。',
 });
-add('appointments.enabled','自动英雄委任','英雄',{help:'在杂项 → 英雄与装备中设置开关和委任优先级，挂机按保存顺序调用游戏一键委任。'});
+add('appointments.enabled','自动英雄委任','英雄',{configLabel:'自动委任',help:'开启后，挂机按下方优先级使用游戏的一键委任功能分配英雄，已有任命可能调整。'});
 add('resourceFields.enabled','自动占领资源田','世界与挑战',{help:'按比例或配额占领本盟城市内的资源田，每次检查最多派一队。名额已满时，可放弃超过目标块数的田地来补足其他资源，也会把同类低级田换成可占的高级田。'});
 add('trials.paid','试炼钻石扫荡','世界与挑战',{gates:['resources.allowDiamonds']});
 add('trials.ads','试炼免广告扫荡','世界与挑战');
@@ -77,6 +77,7 @@ const idleModules = {
  'progression.enabled':['世界','progression','推关与试炼'],
  'pirateHunt.enabled':['世界','pirate-hunt','海盗讨伐'],
  'heroes.enabled':['英雄','heroes','英雄养成'],
+ 'appointments.enabled':['英雄','appointments','英雄任命'],
  'antique.enabled':['藏品','antique','藏品养成'],
  'dailies.enabled':['日常与活动','rewards','每日任务与奖励'],
  'loop.tasks':['日常与活动','rewards','主线、支线与成就'],

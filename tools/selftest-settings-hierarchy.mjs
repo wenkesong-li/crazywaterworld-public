@@ -208,7 +208,7 @@ test('军备竞赛主项平铺且参数可展开收起，全天参与与积分�
 test('英雄、藏品、装备各有唯一设置入口，原有分组书签指向新分类', () => {
   const f = fixture({ navigation: true }); f.renderPage();
   const categories = {
-    heroes: ['heroes', 'hero-recruit'],
+    heroes: ['heroes', 'hero-recruit', 'appointments'],
     antique: ['antique', 'antique-recruit'],
     equipment: ['forge'],
   };
@@ -223,6 +223,7 @@ test('英雄、藏品、装备各有唯一设置入口，原有分组书签指�
   }
   for (const [id, keys] of Object.entries({
     'hero-recruit': ['schedule.freeRecruit', 'schedule.ticketRecruit', 'schedule.heroAdRecruit', 'schedule.heroRecruitRewards'],
+    appointments: ['appointments.enabled', 'appointments.priorities'],
     'antique-recruit': ['schedule.freeAntiqueRecruit', 'schedule.antiqueAdRecruit', 'schedule.antiqueRecruitRewards'],
   })) assert.deepEqual(new Set(f.editor.groups.get(id).fields.map(field => field.key)), new Set(keys));
   for (const key of ['schedule.equipmentCollect', 'schedule.equipmentCraft']) {
